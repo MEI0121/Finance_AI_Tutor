@@ -23,7 +23,7 @@ type TutorState = {
 
 const INITIAL_TUTOR_STATE: TutorState = {
   current_topic: "Discounted Dividend Valuation",
-  current_node: "teach",
+  current_node: "greeting",
   remediation_attempts: 0,
   concept_mastered: false,
   messages: [],
@@ -233,22 +233,14 @@ export default function Home() {
                     handleSend();
                   }
                 }}
-                placeholder={
-                  tutorState?.current_node === "complete"
-                    ? "Module complete."
-                    : "Type a message…"
-                }
-                disabled={isLoading || tutorState?.current_node === "complete"}
+                placeholder="Type a message…"
+                disabled={isLoading}
                 className="min-w-0 flex-1 rounded-lg border border-zinc-300 px-3 py-2 text-sm outline-none ring-emerald-500 focus:ring-2 disabled:bg-zinc-100"
               />
               <button
                 type="button"
                 onClick={handleSend}
-                disabled={
-                  isLoading ||
-                  tutorState === null ||
-                  tutorState?.current_node === "complete"
-                }
+                disabled={isLoading || tutorState === null}
                 className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Send className="h-4 w-4" aria-hidden />
