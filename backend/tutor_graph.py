@@ -18,6 +18,9 @@ BACKEND_DIR = Path(__file__).resolve().parent
 CHROMA_DIR = BACKEND_DIR / "chroma_db"
 COLLECTION_NAME = "knowledge_base"
 
+# Default embed for the MVP curriculum topic (Discounted Dividend Valuation); overridable via state.
+DEFAULT_CURRENT_VIDEO_URL = "https://www.youtube.com/embed/-mQJ7a4U9Z8?si=xDlg2zON0SiUOP7-"
+
 IRONCLAD_TEMPLATE = """You are a strict, content-agnostic Finance AI Tutor.
 CURRENT TOPIC: {payload_topic}
 REFERENCE KNOWLEDGE: {retrieved_context}
@@ -51,6 +54,7 @@ class TutorState(TypedDict, total=False):
     route_after_assess_correct: str
     awaiting_plan_confirmation: bool
     is_adhoc_session: bool
+    current_video_url: str
 
 
 class MicroRouteIntent(BaseModel):
@@ -200,6 +204,11 @@ def _reset_session_for_new_learning(state: TutorState) -> TutorState:
     out["greeting_shown"] = True
     out["greeting_next"] = ""
     out["circuit_breaker_triggered"] = False
+    v = out.get("current_video_url")
+    if v is None or str(v).strip() == "":
+        out["current_video_url"] = DEFAULT_CURRENT_VIDEO_URL
+    else:
+        out["current_video_url"] = str(v).strip()
     return out
 
 
@@ -1054,6 +1063,11 @@ def _normalize_incoming(state: dict | None) -> TutorState:
         route_after = ""
     awaiting_plan = bool(state.get("awaiting_plan_confirmation"))
     adhoc = bool(state.get("is_adhoc_session"))
+    video_url = state.get("current_video_url", "")
+    if video_url is None or str(video_url).strip() == "":
+        video_url = DEFAULT_CURRENT_VIDEO_URL
+    else:
+        video_url = str(video_url).strip()
     return {
         "messages": messages,
         "current_node": str(current_node),
@@ -1073,6 +1087,7 @@ def _normalize_incoming(state: dict | None) -> TutorState:
         "route_after_assess_correct": str(route_after),
         "awaiting_plan_confirmation": awaiting_plan,
         "is_adhoc_session": adhoc,
+        "current_video_url": video_url,
     }
 
 

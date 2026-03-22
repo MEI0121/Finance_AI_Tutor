@@ -6,13 +6,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from backend.generative_content import generate_quiz_set, generate_slide_deck
+from backend.schemas import GenerateQuizRequest, GenerateSlidesRequest
 from backend.tutor_graph import run_tutor_flow
 
 app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -38,3 +43,20 @@ def chat(payload: ChatRequest):
         "state": outcome.get("state"),
         "reply": outcome.get("reply"),
     }
+
+
+@app.post("/api/generate_slides")
+def api_generate_slides(payload: GenerateSlidesRequest):
+    deck, err = generate_slide_deck(payload.topic.strip() or "Discounted Dividend Valuation")
+    if err:
+        return {"ok": False, "error": err, "detail": None, "deck": None}
+    return {"ok": True, "error": None, "detail": None, "deck": deck.model_dump()}
+
+
+@app.post("/api/generate_quiz")
+def api_generate_quiz(payload: GenerateQuizRequest):
+    topic = payload.topic.strip() or "Discounted Dividend Valuation"
+    quiz, err = generate_quiz_set(topic, payload.sub_chapter)
+    if err:
+        return {"ok": False, "error": err, "detail": None, "quiz": None}
+    return {"ok": True, "error": None, "detail": None, "quiz": quiz.model_dump()}

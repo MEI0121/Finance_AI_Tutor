@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "katex/dist/katex.min.css";
 
 :root {
   --background: #ffffff;
@@ -23,4 +24,108 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+/* Authoritative reading column — Notion-like textbook typography */
+.textbook-prose {
+  font-size: 1.0625rem;
+  line-height: 1.75;
+  color: rgb(39 39 42);
+}
+
+.textbook-prose p {
+  margin-top: 0.9em;
+}
+
+.notion-h2 {
+  font-size: 1.65rem;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  color: rgb(24 24 27);
+  margin-bottom: 0.75rem;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid rgb(228 228 231);
+}
+
+.notion-h3 {
+  font-size: 1.2rem;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  color: rgb(39 39 42);
+  margin-top: 0.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.textbook-prose .formula {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas,
+    monospace;
+  font-size: 0.98em;
+  font-weight: 500;
+  color: rgb(22 101 52);
+}
+
+.textbook-prose .formula-block {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas,
+    monospace;
+  color: rgb(24 24 27);
+}
+
+/* AI Slides — GFM + KaTeX */
+.slide-markdown {
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  font-size: 1rem;
+  line-height: 1.65;
+  color: rgb(24 24 27);
+}
+
+.slide-markdown h1,
+.slide-markdown h2,
+.slide-markdown h3 {
+  font-family: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  color: rgb(9 9 11);
+  margin-top: 1.25em;
+  margin-bottom: 0.5em;
+}
+
+.slide-markdown h1:first-child,
+.slide-markdown h2:first-child,
+.slide-markdown h3:first-child {
+  margin-top: 0;
+}
+
+.slide-markdown p {
+  margin-top: 0.75em;
+}
+
+.slide-markdown ul,
+.slide-markdown ol {
+  margin: 0.75em 0;
+  padding-left: 1.35em;
+}
+
+.slide-markdown table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+  font-size: 0.92em;
+}
+
+.slide-markdown th,
+.slide-markdown td {
+  border: 1px solid rgb(228 228 231);
+  padding: 0.5rem 0.65rem;
+  text-align: left;
+}
+
+.slide-markdown th {
+  background: rgb(250 250 250);
+  font-weight: 600;
+}
+
+.slide-markdown .katex-display {
+  margin: 1em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
 }
