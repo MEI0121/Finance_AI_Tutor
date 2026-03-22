@@ -1,6 +1,8 @@
 import json
+import logging
 import os
 import re
+import threading
 from pathlib import Path
 from typing import Literal, TypedDict
 
@@ -14,12 +16,26 @@ from pydantic import BaseModel, Field
 
 load_dotenv()
 
+logger = logging.getLogger(__name__)
+
 BACKEND_DIR = Path(__file__).resolve().parent
 CHROMA_DIR = BACKEND_DIR / "chroma_db"
 COLLECTION_NAME = "knowledge_base"
 
+# ChromaDB 1.x shares one System per persist path; creating a new PersistentClient on
+# every query can drive refcount/stop logic incorrectly and leave RustBindingsAPI
+# without initialized bindings (tenant validation then fails with AttributeError).
+_chroma_client: object | None = None
+_chroma_lock = threading.Lock()
+
 # Default embed for the MVP curriculum topic (Discounted Dividend Valuation); overridable via state.
 DEFAULT_CURRENT_VIDEO_URL = "https://www.youtube.com/embed/-mQJ7a4U9Z8?si=xDlg2zON0SiUOP7-"
+
+GENERIC_SESSION_GREETING = (
+    "Hello! I'm your AI tutor for this session. I'm here to help you understand "
+    "today's topic. Feel free to ask any specific questions, explore an idea, or let me know "
+    "if you'd like a full walkthrough. No pressure—I'm here to help!"
+)
 
 IRONCLAD_TEMPLATE = """You are a strict, content-agnostic Finance AI Tutor.
 CURRENT TOPIC: {payload_topic}
@@ -27,7 +43,7 @@ REFERENCE KNOWLEDGE: {retrieved_context}
 
 CRITICAL RULES:
 1. ZERO HALLUCINATION: You must base your teachings, explanations, and quizzes STRICTLY and ONLY on the {retrieved_context}. Do not use your pre-trained internet knowledge to invent formulas or facts.
-2. OUT-OF-DOMAIN REJECTION: If the user asks about ANYTHING unrelated to the CURRENT TOPIC (e.g., weather, coding, unrelated stocks like TSLA, or general advice), you MUST immediately intercept and reply: "That is outside the scope of our current lesson on [CURRENT TOPIC]. Let's refocus on the material."
+2. OUT-OF-DOMAIN REJECTION: If the user asks about ANYTHING unrelated to the CURRENT TOPIC (e.g., weather, coding, unrelated stocks like TSLA, or general advice), you MUST immediately intercept and reply: "That is outside the scope of our current lesson on [CURRENT TOPIC]. Let's refocus on the material." Exception: requests to TRANSLATE course materials or text drawn from REFERENCE KNOWLEDGE (e.g., into Chinese or another language) are ALWAYS valid, on-topic pedagogical requests. Fulfill them using the quoted or retrieved material; do not reject translation requests that contain lesson-related text.
 3. NO SPOILERS: During the Socratic Remediation phase, NEVER give the final mathematical answer directly. Provide a hint based on the {retrieved_context} and ask the user to try again.
 4. ABSOLUTELY NO LaTeX formatting. DO NOT use \\[, \\], \\(, or \\). Format all formulas using simple plain text, e.g., Vt = D / (r - g).
 5. EXPLAIN LIKE I'M 5: Whenever you introduce a financial concept or formula, you MUST pair it with a simple, real-world analogy (e.g., renting an apartment, a lemonade stand, splitting a pizza) so it feels intuitive. Avoid academic jargon unless you briefly define it in plain words.
@@ -88,16 +104,33 @@ class CurriculumPathIntent(BaseModel):
     )
 
 
+def _get_persistent_chroma_client():
+    """Return a single PersistentClient for this process (thread-safe lazy init)."""
+    global _chroma_client
+    with _chroma_lock:
+        if _chroma_client is None:
+            _chroma_client = chromadb.PersistentClient(path=str(CHROMA_DIR))
+        return _chroma_client
+
+
 def _get_collection():
     embedding_fn = DefaultEmbeddingFunction()
-    client = chromadb.PersistentClient(path=str(CHROMA_DIR))
-    names = [c.name for c in client.list_collections()]
+    try:
+        client = _get_persistent_chroma_client()
+        names = [c.name for c in client.list_collections()]
+    except Exception as exc:
+        logger.warning("ChromaDB client unavailable: %s", exc)
+        return None
     if COLLECTION_NAME not in names:
         return None
-    return client.get_collection(
-        name=COLLECTION_NAME,
-        embedding_function=embedding_fn,
-    )
+    try:
+        return client.get_collection(
+            name=COLLECTION_NAME,
+            embedding_function=embedding_fn,
+        )
+    except Exception as exc:
+        logger.warning("ChromaDB get_collection failed: %s", exc)
+        return None
 
 
 def retrieve_context(query: str, k: int = 5) -> str:
@@ -285,6 +318,8 @@ def _signals_plan_start_agreement(user_text: str) -> bool:
 
 def _classify_greeting_intent(topic: str, user_text: str, context: str) -> str:
     """Return 'domain' or 'off_topic'."""
+    if re.search(r"\btranslate\b", user_text, re.I):
+        return "domain"
     system = _base_prompt(topic, context) + """
 
 CLASSIFIER (INTERNAL)
@@ -294,7 +329,7 @@ INTENT: DOMAIN
 or
 INTENT: OFF_TOPIC
 
-Use OFF_TOPIC only if they clearly want something unrelated to this lesson or refuse to engage with the topic."""
+Use OFF_TOPIC only if they clearly want something unrelated to this lesson or refuse to engage with the topic. Requests to translate lesson text or course materials (any target language) are INTENT: DOMAIN."""
     llm = _llm()
     reply = llm.invoke(
         [
@@ -489,29 +524,12 @@ When in doubt between the two, prefer "micro_teach" if they sound eager to begin
 def greeting_node(state: TutorState) -> TutorState:
     topic = state.get("current_topic", "the lesson")
     context = retrieve_context(topic)
-    base_prompt = _base_prompt(topic, context)
-    llm = _llm()
     greeting_shown = bool(state.get("greeting_shown"))
 
     if not greeting_shown:
-        extra = """
-
-NODE: GREETING (FIRST TURN)
-- Briefly introduce yourself as their finance tutor for this session.
-- Say what you can help with based ONLY on REFERENCE KNOWLEDGE (one short sentence).
-- Invite them in a natural way: they can ask any specific question or explore one idea, OR say if they want a full guided walkthrough from scratch — no pressure either way.
-- Hard cap: at most 100 words total. Be friendly and natural. Do not mention quizzes or tests."""
-        system = base_prompt + extra
-        reply = llm.invoke(
-            [
-                SystemMessage(content=system),
-                HumanMessage(
-                    content="The learner just opened the lesson. Write your greeting."
-                ),
-            ]
+        new_messages = _append_message(
+            state.get("messages"), "assistant", GENERIC_SESSION_GREETING
         )
-        text = reply.content if isinstance(reply.content, str) else str(reply.content)
-        new_messages = _append_message(state.get("messages"), "assistant", text)
         return {
             "messages": new_messages,
             "greeting_shown": True,

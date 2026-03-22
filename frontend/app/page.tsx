@@ -4,16 +4,19 @@ import {
   BookOpen,
   ChevronDown,
   MessageCircle,
-  Play,
   Send,
   Sparkles,
+  Video,
   X,
 } from "lucide-react";
 import dynamic from "next/dynamic";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -34,6 +37,9 @@ const TextbookPdf = dynamic(
 );
 
 const CHAT_URL = "http://127.0.0.1:8000/chat";
+
+/** Bootstrap user message from run_tutor_flow; hidden in UI but kept in state. */
+const HIDDEN_BOOTSTRAP_USER_MESSAGE = "Please begin the lesson.";
 
 type WorkspaceMode = "textbook" | "slides" | "quiz";
 
@@ -90,6 +96,39 @@ function lastAssistantIndex(messages: ChatMessage[]): number {
   return -1;
 }
 
+/** Selection anchored inside UI chrome (pagination, toolbars) — no Point-and-Read popover. */
+/** YouTube embed must include enablejsapi=1 for iframe postMessage commands. */
+function ensureYouTubeJsApi(embedUrl: string): string {
+  const trimmed = embedUrl.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  try {
+    const u = new URL(trimmed);
+    if (!u.searchParams.has("enablejsapi")) {
+      u.searchParams.set("enablejsapi", "1");
+    }
+    return u.toString();
+  } catch {
+    return trimmed.includes("enablejsapi=")
+      ? trimmed
+      : `${trimmed}${trimmed.includes("?") ? "&" : "?"}enablejsapi=1`;
+  }
+}
+
+function selectionTouchesExcludedChrome(container: Node): boolean {
+  const el =
+    container.nodeType === Node.TEXT_NODE
+      ? container.parentElement
+      : container instanceof Element
+        ? container
+        : null;
+  if (!el) {
+    return false;
+  }
+  return el.closest("button") != null || el.closest(".no-popover") != null;
+}
+
 export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [tutorState, setTutorState] = useState<TutorState | null>(null);
@@ -104,6 +143,7 @@ export default function Home() {
 
   const readingRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const videoIframeRef = useRef<HTMLIFrameElement>(null);
   const bootstrapped = useRef(false);
 
   const applyChatResponse = useCallback((data: ChatResponse) => {
@@ -174,7 +214,33 @@ export default function Home() {
   )
     .toString()
     .trim();
+  const videoEmbedUrlWithJsApi = useMemo(
+    () => ensureYouTubeJsApi(videoEmbedUrl),
+    [videoEmbedUrl]
+  );
   const showVideoPlayer = videoEmbedUrl.length > 0;
+
+  useEffect(() => {
+    if (videoExpanded) {
+      return;
+    }
+    const win = videoIframeRef.current?.contentWindow;
+    if (!win) {
+      return;
+    }
+    try {
+      win.postMessage(
+        JSON.stringify({
+          event: "command",
+          func: "pauseVideo",
+          args: "",
+        }),
+        "*"
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [videoExpanded]);
 
   const activeQuiz = tutorState?.active_quiz;
   const hasActiveQuiz =
@@ -233,6 +299,10 @@ export default function Home() {
 
   const handleReadingMouseUp = useCallback(() => {
     window.requestAnimationFrame(() => {
+      if (workspaceMode === "quiz") {
+        setSelectionPopover(null);
+        return;
+      }
       const root = readingRef.current;
       const sel = window.getSelection();
       if (!root || !sel || sel.rangeCount === 0 || sel.isCollapsed) {
@@ -246,6 +316,10 @@ export default function Home() {
       }
       const range = sel.getRangeAt(0);
       if (!root.contains(range.commonAncestorContainer)) {
+        setSelectionPopover(null);
+        return;
+      }
+      if (selectionTouchesExcludedChrome(range.commonAncestorContainer)) {
         setSelectionPopover(null);
         return;
       }
@@ -265,7 +339,13 @@ export default function Home() {
         placeAbove,
       });
     });
-  }, []);
+  }, [workspaceMode]);
+
+  useEffect(() => {
+    if (workspaceMode === "quiz") {
+      setSelectionPopover(null);
+    }
+  }, [workspaceMode]);
 
   useEffect(() => {
     if (!selectionPopover) {
@@ -313,15 +393,16 @@ export default function Home() {
         </div>
       </aside>
 
-      {/* Center: multimodal workspace — tabs, sticky video, tab content */}
+      {/* Center: multimodal workspace — unified header + video, tab content */}
       <main className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto bg-white shadow-inner">
-        <div className="sticky top-0 z-30 bg-white shadow-[0_8px_30px_-12px_rgba(0,0,0,0.12)]">
+        <div className="sticky top-0 z-30 border-b border-zinc-200/80 bg-white/90 shadow-sm backdrop-blur-md">
           <div
-            className="border-b border-zinc-200/90 px-3 py-2.5 sm:px-4"
+            className="mx-auto grid max-w-5xl grid-cols-[1fr_auto_1fr] items-center gap-3 p-4"
             role="navigation"
             aria-label="Learning workspace"
           >
-            <div className="mx-auto flex max-w-5xl justify-center">
+            <div className="min-w-0" aria-hidden />
+            <div className="flex justify-center">
               <div
                 className="inline-flex rounded-full bg-zinc-100/95 p-1 ring-1 ring-zinc-200/90"
                 role="tablist"
@@ -371,61 +452,53 @@ export default function Home() {
                 </button>
               </div>
             </div>
-          </div>
-
-          <div className="flex min-h-[3.25rem] items-stretch bg-zinc-950 text-white">
-            <div className="flex min-w-0 flex-1 items-center gap-3 px-4 py-3">
-              <span
-                className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-white/10 sm:flex"
-                aria-hidden
-              >
-                <Play className="h-4 w-4 text-emerald-400" />
-              </span>
-              <span className="min-w-0 text-sm font-semibold tracking-wide sm:text-[0.95rem]">
-                WATCH VIDEO: Gordon Growth Model Explained
-              </span>
+            <div className="flex min-w-0 justify-end">
+              {showVideoPlayer ? (
+                <button
+                  type="button"
+                  aria-expanded={videoExpanded}
+                  aria-label={
+                    videoExpanded
+                      ? "Collapse video tutorial"
+                      : "Expand video tutorial"
+                  }
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    setVideoExpanded((v) => !v);
+                  }}
+                  className="inline-flex shrink-0 items-center gap-2 rounded-full border border-zinc-200/90 bg-white/95 px-3.5 py-2 text-sm font-medium text-zinc-700 shadow-sm ring-1 ring-zinc-900/5 transition hover:border-zinc-300 hover:bg-zinc-50 hover:text-zinc-900"
+                >
+                  <Video className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden />
+                  <span className="hidden sm:inline">Watch video</span>
+                  <ChevronDown
+                    className={`h-4 w-4 shrink-0 text-zinc-500 transition-transform duration-300 ${
+                      videoExpanded ? "rotate-180" : ""
+                    }`}
+                    aria-hidden
+                  />
+                </button>
+              ) : null}
             </div>
-            <button
-              type="button"
-              aria-expanded={videoExpanded}
-              aria-label={
-                videoExpanded ? "Collapse video panel" : "Expand video panel"
-              }
-              onClick={(e) => {
-                e.currentTarget.blur();
-                setVideoExpanded((v) => !v);
-              }}
-              className="flex w-12 shrink-0 items-center justify-center border-l border-white/10 text-zinc-200 transition hover:bg-zinc-900 hover:text-white"
-            >
-              <ChevronDown
-                className={`h-5 w-5 transition-transform duration-300 ${
-                  videoExpanded ? "rotate-180" : ""
-                }`}
-                aria-hidden
-              />
-            </button>
           </div>
           {showVideoPlayer ? (
             <div
-              className={`grid transition-[grid-template-rows] duration-300 ease-out ${
-                videoExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+              className={`absolute left-0 right-0 top-full z-40 overflow-hidden bg-zinc-950 shadow-2xl transition-[max-height] duration-300 ease-out ${
+                videoExpanded
+                  ? "pointer-events-auto max-h-[min(85vh,calc(100vw*0.5625))]"
+                  : "pointer-events-none max-h-0"
               }`}
             >
-              <div className="min-h-0 overflow-hidden border-b border-zinc-800 bg-black">
-                <div
-                  className="relative mx-auto w-full max-w-5xl"
-                  style={{ aspectRatio: "16 / 9" }}
-                >
-                  <iframe
-                    title="Gordon Growth Model Explained"
-                    src={videoEmbedUrl}
-                    className="absolute inset-0 h-full w-full border-0"
-                    allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                    allowFullScreen
-                    loading="lazy"
-                    referrerPolicy="strict-origin-when-cross-origin"
-                  />
-                </div>
+              <div className="relative mx-auto w-full max-w-5xl aspect-video">
+                <iframe
+                  ref={videoIframeRef}
+                  title="Video tutorial"
+                  src={videoEmbedUrlWithJsApi}
+                  className="absolute inset-0 h-full w-full border-0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                  loading="lazy"
+                  referrerPolicy="strict-origin-when-cross-origin"
+                />
               </div>
             </div>
           ) : null}
@@ -517,6 +590,12 @@ export default function Home() {
 
           <ul className="flex flex-col gap-3">
             {messages.map((m, i) => {
+              if (
+                m.role === "user" &&
+                m.content === HIDDEN_BOOTSTRAP_USER_MESSAGE
+              ) {
+                return null;
+              }
               const isUser = m.role === "user";
               const isLastAssistant = i === lastIdx;
               return (
@@ -525,13 +604,21 @@ export default function Home() {
                     className={`flex ${isUser ? "justify-end" : "justify-start"}`}
                   >
                     <div
-                      className={`max-w-[min(100%,100%)] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
+                      className={`max-w-[min(100%,100%)] rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
                         isUser
-                          ? "bg-emerald-600 text-white"
+                          ? "whitespace-pre-wrap bg-emerald-600 text-white"
                           : "border border-zinc-200 bg-zinc-50 text-zinc-900"
                       }`}
                     >
-                      {m.content}
+                      {isUser ? (
+                        m.content
+                      ) : (
+                        <div className="prose prose-sm prose-zinc max-w-none [&_p]:my-2 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-2 [&_ol]:my-2 [&_li]:my-0.5 [&_code]:rounded-md [&_code]:bg-zinc-200/70 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[0.8125rem] [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-zinc-900/90 [&_pre]:p-3 [&_pre]:text-zinc-100 [&_blockquote]:my-2 [&_blockquote]:border-l-zinc-300">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {m.content}
+                          </ReactMarkdown>
+                        </div>
+                      )}
                     </div>
                   </div>
                   {isLastAssistant && showQuizButtons ? (
@@ -622,7 +709,7 @@ export default function Home() {
             onMouseDown={(e) => e.preventDefault()}
             onClick={() =>
               sendFromSelection(
-                `Please explain this concept: '${truncatedForMessage(selectionPopover.text)}'`
+                `Please analyze, explain, or solve the following text/exercise extracted from my textbook: '${truncatedForMessage(selectionPopover.text)}'`
               )
             }
           >

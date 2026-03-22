@@ -121,7 +121,10 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
   const [mqSelected, setMqSelected] = useState<"A" | "B" | "C" | "D" | null>(
     null
   );
-  const [mqSubmitted, setMqSubmitted] = useState(false);
+  /** Only lock options after a correct submit; wrong answers allow retry. */
+  const [mqFeedback, setMqFeedback] = useState<"idle" | "wrong" | "correct">(
+    "idle"
+  );
   const [feynmanDraft, setFeynmanDraft] = useState("");
 
   const load = useCallback(async () => {
@@ -130,7 +133,7 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
     setDeck([]);
     setIndex(0);
     setMqSelected(null);
-    setMqSubmitted(false);
+    setMqFeedback("idle");
     setFeynmanDraft("");
     try {
       const res = await fetch(`${API_BASE}/api/generate_slides`, {
@@ -174,7 +177,7 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
 
   useEffect(() => {
     setMqSelected(null);
-    setMqSubmitted(false);
+    setMqFeedback("idle");
     setFeynmanDraft("");
   }, [index]);
 
@@ -196,7 +199,9 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
     if (mqSelected == null || slide?.type !== "mini-quiz") {
       return;
     }
-    setMqSubmitted(true);
+    setMqFeedback(
+      mqSelected === slide.correct_answer ? "correct" : "wrong"
+    );
   };
 
   if (loading) {
@@ -285,11 +290,11 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
                         ? "border-emerald-500 bg-emerald-50/80 ring-1 ring-emerald-500/30"
                         : "border-zinc-200/90 bg-white/80 hover:border-zinc-300"
                     } ${
-                      mqSubmitted && opt.key === slide.correct_answer
+                      mqFeedback !== "idle" && opt.key === slide.correct_answer
                         ? "border-emerald-600 bg-emerald-50"
                         : ""
                     } ${
-                      mqSubmitted &&
+                      mqFeedback !== "idle" &&
                       mqSelected === opt.key &&
                       opt.key !== slide.correct_answer
                         ? "border-red-300 bg-red-50/50"
@@ -301,8 +306,13 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
                       name={`slide-mcq-${index}`}
                       className="mt-1 h-4 w-4 shrink-0 accent-emerald-600"
                       checked={mqSelected === opt.key}
-                      disabled={mqSubmitted}
-                      onChange={() => setMqSelected(opt.key)}
+                      disabled={mqFeedback === "correct"}
+                      onChange={() => {
+                        setMqSelected(opt.key);
+                        if (mqFeedback === "wrong") {
+                          setMqFeedback("idle");
+                        }
+                      }}
                     />
                     <span className="flex-1 text-zinc-800">
                       <span className="font-semibold tabular-nums text-zinc-500">
@@ -317,23 +327,21 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
               <div className="mt-6 flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  disabled={mqSelected == null || mqSubmitted}
+                  disabled={mqSelected == null || mqFeedback === "correct"}
                   onClick={handleMqSubmit}
                   className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-600/25 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Submit
                 </button>
-                {mqSubmitted ? (
+                {mqFeedback !== "idle" ? (
                   <p
                     className={`text-sm font-semibold ${
-                      mqSelected === slide.correct_answer
+                      mqFeedback === "correct"
                         ? "text-emerald-700"
                         : "text-red-700"
                     }`}
                   >
-                    {mqSelected === slide.correct_answer
-                      ? "Correct."
-                      : "Incorrect."}
+                    {mqFeedback === "correct" ? "Correct." : "Incorrect."}
                   </p>
                 ) : null}
               </div>

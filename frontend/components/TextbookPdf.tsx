@@ -171,8 +171,8 @@ export function TextbookPdf() {
                 )}
               </div>
 
-              {/* Pagination — sticky within reading flow */}
-              <div className="sticky bottom-4 z-20 mt-8 flex justify-center px-1">
+              {/* Pagination — sticky within reading flow (no-popover: exclude from Point-and-Read) */}
+              <div className="no-popover sticky bottom-4 z-20 mt-8 flex justify-center px-1">
                 <div className="flex w-full max-w-2xl flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-200/90 bg-white/95 px-4 py-3 shadow-[0_8px_30px_-12px_rgba(0,0,0,0.15)] backdrop-blur-md ring-1 ring-zinc-900/5 supports-[backdrop-filter]:bg-white/85">
                   <button
                     type="button"

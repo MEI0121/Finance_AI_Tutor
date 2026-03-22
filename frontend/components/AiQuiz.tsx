@@ -36,7 +36,8 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
   const [selected, setSelected] = useState<"A" | "B" | "C" | "D" | null>(
     null
   );
-  const [submitted, setSubmitted] = useState(false);
+  /** Only lock options after a correct submit; wrong answers allow retry. */
+  const [feedback, setFeedback] = useState<"idle" | "wrong" | "correct">("idle");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -83,7 +84,7 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
         setQuestions(qs);
         setQIndex(0);
         setSelected(null);
-        setSubmitted(false);
+        setFeedback("idle");
         setError(null);
       }
     } catch (e) {
@@ -108,7 +109,7 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
       setQuestions(cached);
       setQIndex(0);
       setSelected(null);
-      setSubmitted(false);
+      setFeedback("idle");
       setError(null);
       setLoading(false);
       return;
@@ -133,7 +134,7 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
     if (selected == null || !q) {
       return;
     }
-    setSubmitted(true);
+    setFeedback(selected === q.correct_answer ? "correct" : "wrong");
   };
 
   const handleRegenerate = () => {
@@ -197,8 +198,8 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
     );
   }
 
-  const isCorrect = submitted && selected === q.correct_answer;
-  const isWrong = submitted && selected !== q.correct_answer;
+  const isCorrect = feedback === "correct";
+  const isWrong = feedback === "wrong";
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 pb-6">
@@ -255,11 +256,13 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
                   ? "border-emerald-500 bg-emerald-50/80 ring-1 ring-emerald-500/30"
                   : "border-zinc-200 bg-zinc-50/50 hover:border-zinc-300"
               } ${
-                submitted && key === q.correct_answer
+                feedback !== "idle" && key === q.correct_answer
                   ? "border-emerald-600 bg-emerald-50"
                   : ""
               } ${
-                submitted && selected === key && key !== q.correct_answer
+                feedback !== "idle" &&
+                selected === key &&
+                key !== q.correct_answer
                   ? "border-red-300 bg-red-50/50"
                   : ""
               }`}
@@ -269,8 +272,13 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
                 name={`mcq-${qIndex}`}
                 className="mt-1 h-4 w-4 shrink-0 accent-emerald-600"
                 checked={selected === key}
-                disabled={submitted}
-                onChange={() => setSelected(key)}
+                disabled={feedback === "correct"}
+                onChange={() => {
+                  setSelected(key);
+                  if (feedback === "wrong") {
+                    setFeedback("idle");
+                  }
+                }}
               />
               <span className="text-sm leading-relaxed text-zinc-800 sm:text-[0.95rem]">
                 <span className="font-semibold text-zinc-600">{key}. </span>
@@ -280,7 +288,7 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
           ))}
         </div>
 
-        {submitted ? (
+        {feedback !== "idle" ? (
           <div
             className={`mt-6 rounded-xl border px-4 py-3 text-sm font-semibold ${
               isCorrect
@@ -296,7 +304,7 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <button
             type="button"
-            disabled={selected == null || submitted}
+            disabled={selected == null || feedback === "correct"}
             onClick={handleSubmit}
             className="rounded-xl bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-600/25 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
@@ -309,7 +317,7 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
               onClick={() => {
                 setQIndex((i) => i - 1);
                 setSelected(null);
-                setSubmitted(false);
+                setFeedback("idle");
               }}
               className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40"
             >
@@ -321,7 +329,7 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
               onClick={() => {
                 setQIndex((i) => i + 1);
                 setSelected(null);
-                setSubmitted(false);
+                setFeedback("idle");
               }}
               className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40"
             >
@@ -352,7 +360,7 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
           If you are stuck, use the Socratic button to work through it in chat.
         </p>
         <div className="mt-4 max-h-72 min-h-[4.5rem] overflow-y-auto rounded-xl border border-zinc-200/80 bg-white/90 px-4 py-3 text-sm text-zinc-700">
-          {submitted ? (
+          {feedback !== "idle" ? (
             <p className="whitespace-pre-wrap leading-relaxed">{q.explanation}</p>
           ) : (
             <span className="text-zinc-500">
