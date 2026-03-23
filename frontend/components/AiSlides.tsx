@@ -28,10 +28,12 @@ export type SlideBlock =
       prompt: string;
     };
 
+/** `calculation_scratchpad` may appear on mini-quiz slides from the API — ignore for UI (generation-time CoT only). */
 type ApiSlide = {
   type: "concept" | "mini-quiz" | "feynman";
   title?: string | null;
   content_md?: string | null;
+  calculation_scratchpad?: string | null;
   question?: string | null;
   options?: string[] | null;
   correct_answer?: "A" | "B" | "C" | "D" | null;
@@ -39,6 +41,28 @@ type ApiSlide = {
 };
 
 const KEYS = ["A", "B", "C", "D"] as const;
+
+function stripLeadingOptionPrefix(raw: string): string {
+  return raw.replace(/^\s*[A-Da-d][.)]\s*/, "").trim();
+}
+
+type SlideMqState = {
+  selected: "A" | "B" | "C" | "D" | null;
+  feedback: "idle" | "wrong" | "correct";
+  feedbackMd: string;
+  evalLoading: boolean;
+  evalError: string | null;
+};
+
+function emptySlideMq(): SlideMqState {
+  return {
+    selected: null,
+    feedback: "idle",
+    feedbackMd: "",
+    evalLoading: false,
+    evalError: null,
+  };
+}
 
 function mapApiSlideToBlock(s: ApiSlide): SlideBlock | null {
   const md = (s.content_md ?? "").trim();
@@ -108,6 +132,16 @@ function SlideMarkdown({ children }: { children: string }) {
   );
 }
 
+function SlideFeedbackMarkdown({ children }: { children: string }) {
+  return (
+    <div className="slide-markdown max-w-none select-text text-[0.9375rem] leading-relaxed">
+      <ReactMarkdown remarkPlugins={mdPlugins} rehypePlugins={rehypePlugins}>
+        {children}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
 type AiSlidesProps = {
   onOpenChatWithMessage?: (message: string) => void;
 };
@@ -118,13 +152,8 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [mqSelected, setMqSelected] = useState<"A" | "B" | "C" | "D" | null>(
-    null
-  );
-  /** Only lock options after a correct submit; wrong answers allow retry. */
-  const [mqFeedback, setMqFeedback] = useState<"idle" | "wrong" | "correct">(
-    "idle"
-  );
+  /** Per slide index: mini-quiz attempt + API feedback (persists when navigating back). */
+  const [mqByIndex, setMqByIndex] = useState<Record<number, SlideMqState>>({});
   const [feynmanDraft, setFeynmanDraft] = useState("");
 
   const load = useCallback(async () => {
@@ -132,8 +161,7 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
     setError(null);
     setDeck([]);
     setIndex(0);
-    setMqSelected(null);
-    setMqFeedback("idle");
+    setMqByIndex({});
     setFeynmanDraft("");
     try {
       const res = await fetch(`${API_BASE}/api/generate_slides`, {
@@ -176,10 +204,15 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
   }, [load]);
 
   useEffect(() => {
-    setMqSelected(null);
-    setMqFeedback("idle");
     setFeynmanDraft("");
   }, [index]);
+
+  const patchSlideMq = useCallback((i: number, patch: Partial<SlideMqState>) => {
+    setMqByIndex((prev) => {
+      const base = prev[i] ?? emptySlideMq();
+      return { ...prev, [i]: { ...base, ...patch } };
+    });
+  }, []);
 
   const slide = deck[index];
   const canPrev = index > 0;
@@ -195,13 +228,55 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
     );
   };
 
-  const handleMqSubmit = () => {
-    if (mqSelected == null || slide?.type !== "mini-quiz") {
+  const handleMqSubmit = async () => {
+    if (slide?.type !== "mini-quiz") {
       return;
     }
-    setMqFeedback(
-      mqSelected === slide.correct_answer ? "correct" : "wrong"
-    );
+    const mq = mqByIndex[index] ?? emptySlideMq();
+    if (mq.selected == null) {
+      return;
+    }
+    const isCorrect = mq.selected === slide.correct_answer;
+    patchSlideMq(index, {
+      feedback: isCorrect ? "correct" : "wrong",
+      evalLoading: true,
+      evalError: null,
+      feedbackMd: "",
+    });
+
+    const opt = slide.options.find((o) => o.key === mq.selected);
+    const optBody = opt ? stripLeadingOptionPrefix(opt.text) : "";
+    const selectedOption = `${mq.selected}. ${optBody}`;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/evaluate_quiz`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question_text: slide.question,
+          selected_option: selectedOption,
+          is_correct: isCorrect,
+        }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        feedback_md?: string;
+      };
+      if (!res.ok || !data.ok || typeof data.feedback_md !== "string") {
+        patchSlideMq(index, {
+          evalLoading: false,
+          evalError: data.error || `Request failed (${res.status})`,
+        });
+        return;
+      }
+      patchSlideMq(index, { evalLoading: false, feedbackMd: data.feedback_md });
+    } catch {
+      patchSlideMq(index, {
+        evalLoading: false,
+        evalError: "Unable to reach the evaluation API.",
+      });
+    }
   };
 
   if (loading) {
@@ -213,7 +288,8 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
         >
           <div className="h-10 w-10 animate-spin rounded-full border-2 border-emerald-600 border-t-transparent" />
           <p className="mt-4 max-w-md px-6 text-center text-sm leading-relaxed text-zinc-600">
-            AI is analyzing the textbook and generating your slides…
+            AI is performing a deep-dive analysis of your textbook and meticulously
+            crafting your exhaustive CFA-grade slides. This may take a minute…
           </p>
         </div>
         <div className="space-y-2 px-2">
@@ -238,6 +314,26 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
       </div>
     );
   }
+
+  const mqState =
+    slide.type === "mini-quiz"
+      ? (mqByIndex[index] ?? emptySlideMq())
+      : emptySlideMq();
+  const mqCorrect = mqState.feedback === "correct";
+  const mqWrong = mqState.feedback === "wrong";
+
+  const mqBoxTone =
+    slide.type !== "mini-quiz"
+      ? ""
+      : mqState.evalError
+        ? "border-red-200/90 bg-red-50/95 text-red-950 ring-red-900/10"
+        : mqCorrect && mqState.feedbackMd && !mqState.evalLoading
+          ? "border-emerald-200/90 bg-gradient-to-br from-emerald-50/95 to-emerald-50/60 text-zinc-900 ring-emerald-900/10"
+          : mqWrong && mqState.feedbackMd && !mqState.evalLoading
+            ? "border-amber-200/70 bg-gradient-to-br from-amber-50/90 via-amber-50/40 to-sky-50/60 text-zinc-900 ring-amber-900/10"
+            : mqState.evalLoading || mqState.feedback !== "idle"
+              ? "border-zinc-200/80 bg-white text-zinc-700 ring-zinc-900/5"
+              : "border-dashed border-zinc-200/90 bg-zinc-50/50 text-zinc-600 ring-zinc-900/[0.04]";
 
   return (
     <div className="mx-auto w-full max-w-5xl pb-4">
@@ -272,7 +368,7 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
           {slide.type === "mini-quiz" ? (
             <article>
               <p className="font-serif text-xl font-semibold leading-snug text-zinc-950 sm:text-2xl">
-                Quick check
+                Exam-style check
               </p>
               <div className="mt-4">
                 <SlideMarkdown>{slide.content_md}</SlideMarkdown>
@@ -282,20 +378,20 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
               </p>
               <div className="mt-6 space-y-3 font-sans">
                 {slide.options.map((opt) => (
-
                   <label
                     key={opt.key}
                     className={`flex cursor-pointer items-start gap-3 rounded-xl border px-4 py-3 text-left text-sm shadow-sm transition sm:text-base ${
-                      mqSelected === opt.key
+                      mqState.selected === opt.key
                         ? "border-emerald-500 bg-emerald-50/80 ring-1 ring-emerald-500/30"
                         : "border-zinc-200/90 bg-white/80 hover:border-zinc-300"
                     } ${
-                      mqFeedback !== "idle" && opt.key === slide.correct_answer
+                      mqState.feedback !== "idle" &&
+                      opt.key === slide.correct_answer
                         ? "border-emerald-600 bg-emerald-50"
                         : ""
                     } ${
-                      mqFeedback !== "idle" &&
-                      mqSelected === opt.key &&
+                      mqState.feedback !== "idle" &&
+                      mqState.selected === opt.key &&
                       opt.key !== slide.correct_answer
                         ? "border-red-300 bg-red-50/50"
                         : ""
@@ -305,43 +401,89 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
                       type="radio"
                       name={`slide-mcq-${index}`}
                       className="mt-1 h-4 w-4 shrink-0 accent-emerald-600"
-                      checked={mqSelected === opt.key}
-                      disabled={mqFeedback === "correct"}
+                      checked={mqState.selected === opt.key}
+                      disabled={mqState.feedback === "correct"}
                       onChange={() => {
-                        setMqSelected(opt.key);
-                        if (mqFeedback === "wrong") {
-                          setMqFeedback("idle");
-                        }
+                        patchSlideMq(index, {
+                          selected: opt.key,
+                          ...(mqState.feedback === "wrong"
+                            ? {
+                                feedback: "idle",
+                                feedbackMd: "",
+                                evalError: null,
+                              }
+                            : {}),
+                        });
                       }}
                     />
                     <span className="flex-1 text-zinc-800">
                       <span className="font-semibold tabular-nums text-zinc-500">
                         {opt.key}.{" "}
                       </span>
-                      {opt.text}
+                      {stripLeadingOptionPrefix(opt.text)}
                     </span>
                   </label>
-
                 ))}
               </div>
               <div className="mt-6 flex flex-wrap items-center gap-3">
                 <button
                   type="button"
-                  disabled={mqSelected == null || mqFeedback === "correct"}
-                  onClick={handleMqSubmit}
+                  disabled={
+                    mqState.selected == null ||
+                    mqState.feedback === "correct" ||
+                    mqState.evalLoading
+                  }
+                  onClick={() => void handleMqSubmit()}
                   className="rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-600/25 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >
                   Submit
                 </button>
-                {mqFeedback !== "idle" ? (
-                  <p
-                    className={`text-sm font-semibold ${
-                      mqFeedback === "correct"
-                        ? "text-emerald-700"
-                        : "text-red-700"
-                    }`}
-                  >
-                    {mqFeedback === "correct" ? "Correct." : "Incorrect."}
+              </div>
+              <div
+                className={`mt-6 rounded-2xl border px-4 py-4 shadow-sm ring-1 sm:px-5 sm:py-5 ${mqBoxTone}`}
+                role="region"
+                aria-label="Slide quiz feedback"
+              >
+                <p className="mb-3 text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+                  {mqState.evalError
+                    ? "Could not load feedback"
+                    : mqCorrect
+                      ? "Why this is correct"
+                      : mqWrong
+                        ? "Socratic guidance"
+                        : "AI feedback"}
+                </p>
+                {mqState.evalLoading ? (
+                  <div className="flex items-center gap-3 py-2 text-sm font-medium text-zinc-600">
+                    <div className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-emerald-600 border-t-transparent" />
+                    AI is analyzing your logic…
+                  </div>
+                ) : null}
+                {mqState.evalError && !mqState.evalLoading ? (
+                  <p className="text-sm leading-relaxed">{mqState.evalError}</p>
+                ) : null}
+                {!mqState.evalLoading &&
+                !mqState.evalError &&
+                mqState.feedbackMd ? (
+                  <SlideFeedbackMarkdown>
+                    {mqState.feedbackMd}
+                  </SlideFeedbackMarkdown>
+                ) : null}
+                {!mqState.evalLoading &&
+                !mqState.evalError &&
+                !mqState.feedbackMd &&
+                mqState.feedback === "idle" ? (
+                  <p className="text-sm leading-relaxed text-zinc-500">
+                    Submit for institutional-grade feedback—Socratic hints on
+                    wrong answers, full reasoning when correct.
+                  </p>
+                ) : null}
+                {!mqState.evalLoading &&
+                !mqState.evalError &&
+                !mqState.feedbackMd &&
+                mqState.feedback !== "idle" ? (
+                  <p className="text-sm leading-relaxed text-zinc-500">
+                    Preparing your feedback…
                   </p>
                 ) : null}
               </div>
@@ -359,24 +501,28 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
                 <div className="mb-6 h-px w-16 bg-emerald-800/70" aria-hidden />
               ) : null}
               <SlideMarkdown>{slide.content_md}</SlideMarkdown>
-              <div className="mt-8 rounded-xl border border-dashed border-zinc-400/60 bg-white/70 px-5 py-4">
-                <p className="text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-                  Reflection
+              <div className="mt-8 rounded-2xl border border-zinc-200/90 bg-gradient-to-b from-white to-zinc-50/80 p-5 shadow-sm ring-1 ring-zinc-900/5 sm:p-6">
+                <p className="text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-emerald-800/80">
+                  Reflection prompt
                 </p>
-                <div className="mt-2">
+                <div className="mt-3 border-l-2 border-emerald-500/50 pl-4">
                   <SlideMarkdown>{slide.prompt}</SlideMarkdown>
                 </div>
               </div>
-              <div className="mt-6 space-y-3">
-                <label className="block text-sm font-medium text-zinc-700">
-                  Your explanation (Feynman)
+              <div className="mt-8 rounded-2xl border border-emerald-200/60 bg-gradient-to-br from-emerald-50/40 via-white to-zinc-50/90 p-5 shadow-md ring-1 ring-emerald-900/5 sm:p-6">
+                <label className="block text-xs font-semibold uppercase tracking-wide text-zinc-600">
+                  Your Feynman explanation
                 </label>
+                <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+                  Teach the concept back in plain language—then send it to the
+                  tutor for review.
+                </p>
                 <textarea
                   value={feynmanDraft}
                   onChange={(e) => setFeynmanDraft(e.target.value)}
                   rows={6}
-                  placeholder="Explain the idea in your own words, as if teaching someone else…"
-                  className="w-full resize-y rounded-xl border border-zinc-300 bg-white px-4 py-3 text-sm leading-relaxed text-zinc-900 shadow-inner outline-none ring-emerald-500/20 focus:border-emerald-500 focus:ring-2"
+                  placeholder="Explain the idea in your own words, as if teaching a colleague at the desk next to you…"
+                  className="mt-4 w-full resize-y rounded-xl border border-zinc-200 bg-white px-4 py-3.5 text-sm leading-relaxed text-zinc-900 shadow-inner outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/25"
                 />
                 <button
                   type="button"
@@ -384,7 +530,7 @@ export function AiSlides({ onOpenChatWithMessage }: AiSlidesProps) {
                     feynmanDraft.trim() === "" || !onOpenChatWithMessage
                   }
                   onClick={handleFeynmanDiscuss}
-                  className="rounded-xl bg-zinc-900 px-5 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+                  className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-emerald-700/20 bg-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-emerald-900/15 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:border-zinc-200 disabled:bg-zinc-200 disabled:text-zinc-500 disabled:shadow-none sm:w-auto"
                 >
                   Discuss with Tutor
                 </button>

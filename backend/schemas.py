@@ -13,8 +13,15 @@ class Slide(BaseModel):
     content_md: str = Field(
         ...,
         description=(
-            "Full slide body in GitHub-Flavored Markdown: headings, tables, lists. "
-            "Use $ for inline LaTeX and $$ for block LaTeX. Be comprehensive and detailed."
+            "CFA-grade body: GFM with dense paragraphs; concept slides MUST include "
+            "comparison tables and $$ block KaTeX for formulas/derivations. Avoid shallow bullets."
+        ),
+    )
+    calculation_scratchpad: str = Field(
+        default="",
+        description=(
+            "For type mini-quiz only: step-by-step math or rationale BEFORE options; "
+            "must be filled for mini-quiz. For concept or feynman, use empty string."
         ),
     )
     question: str | None = None
@@ -32,13 +39,20 @@ class Slide(BaseModel):
 class SlideDeck(BaseModel):
     slides: list[Slide] = Field(
         ...,
-        min_length=8,
-        max_length=12,
-        description="8-12 slides: dense concept slides, mini-quizzes, feynman checkpoints.",
+        min_length=6,
+        max_length=15,
+        description="6-15 slides: CFA-grade deck without redundancy; mini-quizzes; feynman checkpoint.",
     )
 
 
 class QuizQuestion(BaseModel):
+    calculation_scratchpad: str = Field(
+        ...,
+        description=(
+            "For calculation questions, you MUST write out the step-by-step mathematical proof here BEFORE defining options. "
+            "For concept questions, write a brief rationale."
+        ),
+    )
     question: str
     options: list[str] = Field(
         ...,

@@ -26,7 +26,9 @@ function stripLeadingOptionPrefix(raw: string): string {
 const mdPlugins = [remarkGfm, remarkMath];
 const rehypePlugins = [rehypeKatex];
 
+/** API may include `calculation_scratchpad` for generation-time CoT — never render it in the UI. */
 type ApiQuestion = {
+  calculation_scratchpad?: string;
   question: string;
   options: string[];
   correct_answer: "A" | "B" | "C" | "D";

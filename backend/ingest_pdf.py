@@ -1,9 +1,9 @@
 from pathlib import Path
 
 import chromadb
+import fitz  # PyMuPDF
 from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from pypdf import PdfReader
 
 BACKEND_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = BACKEND_DIR.parent
@@ -11,8 +11,8 @@ DATA_DIR = PROJECT_ROOT / "data"
 PDF_FILENAME = "Discounted Dividend Valuation.pdf"
 CHROMA_DIR = BACKEND_DIR / "chroma_db"
 COLLECTION_NAME = "knowledge_base"
-CHUNK_SIZE = 1000
-CHUNK_OVERLAP = 200
+CHUNK_SIZE = 4000
+CHUNK_OVERLAP = 800
 
 
 def extract_pdf_text(pdf_path: Path) -> str | None:
@@ -20,20 +20,23 @@ def extract_pdf_text(pdf_path: Path) -> str | None:
         print(f"PDF not found: {pdf_path}")
         return None
 
-    reader = PdfReader(str(pdf_path))
-    page_count = len(reader.pages)
-    if page_count == 0:
-        print("PDF has no pages.")
-        return None
+    doc = fitz.open(str(pdf_path))
+    try:
+        page_count = len(doc)
+        if page_count == 0:
+            print("PDF has no pages.")
+            return None
 
-    parts: list[str] = []
-    page_index = 0
-    while page_index < page_count:
-        page = reader.pages[page_index]
-        text = page.extract_text()
-        if text:
-            parts.append(text)
-        page_index += 1
+        parts: list[str] = []
+        page_index = 0
+        while page_index < page_count:
+            page = doc[page_index]
+            text = page.get_text()
+            if text:
+                parts.append(text)
+            page_index += 1
+    finally:
+        doc.close()
 
     combined = "\n\n".join(parts).strip()
     if not combined:
