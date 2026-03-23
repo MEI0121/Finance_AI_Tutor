@@ -6,8 +6,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from backend.generative_content import generate_quiz_set, generate_slide_deck
-from backend.schemas import GenerateQuizRequest, GenerateSlidesRequest
+from backend.generative_content import (
+    evaluate_quiz_feedback,
+    generate_quiz_set,
+    generate_slide_deck,
+)
+from backend.schemas import (
+    EvaluateQuizRequest,
+    GenerateQuizRequest,
+    GenerateSlidesRequest,
+)
 from backend.tutor_graph import run_tutor_flow
 
 app = FastAPI()
@@ -60,3 +68,15 @@ def api_generate_quiz(payload: GenerateQuizRequest):
     if err:
         return {"ok": False, "error": err, "detail": None, "quiz": None}
     return {"ok": True, "error": None, "detail": None, "quiz": quiz.model_dump()}
+
+
+@app.post("/api/evaluate_quiz")
+def api_evaluate_quiz(payload: EvaluateQuizRequest):
+    md, err = evaluate_quiz_feedback(
+        payload.question_text.strip(),
+        payload.selected_option.strip(),
+        payload.is_correct,
+    )
+    if err:
+        return {"ok": False, "error": err, "feedback_md": None}
+    return {"ok": True, "error": None, "feedback_md": md}

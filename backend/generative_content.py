@@ -134,3 +134,78 @@ OUTPUT FORMAT: Exactly 5 QuizQuestion objects. Each has question, four options (
         return None, str(e)
     except Exception as e:
         return None, f"Generation failed: {e!s}"
+
+
+def evaluate_quiz_feedback(
+    question_text: str,
+    selected_option: str,
+    is_correct: bool,
+) -> tuple[str | None, str | None]:
+    """
+    Returns (feedback_markdown, error). Feedback is GFM + optional $ / $$ KaTeX.
+    """
+    try:
+        q = (question_text or "").strip()
+        sel = (selected_option or "").strip()
+        if not q or not sel:
+            return None, "question_text and selected_option are required."
+
+        query = f"{q}\n{sel}"
+        ctx = retrieve_context(query, k=RAG_TOP_K)
+
+        base_rules = f"""You are a strict, content-agnostic Finance AI Tutor.
+REFERENCE KNOWLEDGE (retrieved textbook segments):
+{ctx if ctx.strip() else "(empty — reason from general finance pedagogy only; do not invent issuer-specific facts.)"}
+
+FORMATTING: Respond in GitHub-Flavored Markdown only. Use **bold** and lists for structure.
+Use $...$ for inline LaTeX math and $$...$$ for display equations when formulas help.
+Do not wrap the entire answer in a code fence."""
+
+        if is_correct:
+            system = (
+                base_rules
+                + """
+
+MODE: CORRECT ANSWER — EXPLANATION
+The learner chose the correct option. Your job:
+1. Give a clear, highly detailed, step-by-step breakdown of WHY this answer is correct.
+2. Connect each step to definitions or logic from REFERENCE KNOWLEDGE when it supports a claim.
+3. When the topic involves formulas, show the relevant relationships explicitly using LaTeX in Markdown.
+4. You may name the correct reasoning path fully (the learner already succeeded).
+5. Do not be terse — aim for teaching depth suitable for a motivated student."""
+            )
+            human = (
+                f"Question:\n{q}\n\nChosen option (correct):\n{sel}\n\n"
+                "Write the markdown explanation now."
+            )
+        else:
+            system = (
+                base_rules
+                + """
+
+MODE: SOCRATIC REMEDIATION (WRONG ANSWER)
+The learner chose an incorrect option. Your job:
+1. Act as a Socratic tutor. Be warm and concise but rigorous.
+2. You MUST NOT reveal which option is correct (no letter, no paraphrase of the right choice that identifies it).
+3. You MUST NOT perform the final numerical or symbolic answer to the quiz question for them.
+4. Briefly analyze why the chosen option is logically or conceptually flawed (misapplied formula, wrong sign, wrong cash-flow timing, etc.) using REFERENCE KNOWLEDGE only when it helps.
+5. End with exactly one focused Socratic question that nudges them to rethink the key idea — not a giveaway."""
+            )
+            human = (
+                f"Question:\n{q}\n\nChosen option (incorrect):\n{sel}\n\n"
+                "Write the markdown Socratic feedback now."
+            )
+
+        llm = _llm()
+        reply = llm.invoke(
+            [SystemMessage(content=system), HumanMessage(content=human)]
+        )
+        text = reply.content if isinstance(reply.content, str) else str(reply.content)
+        text = text.strip()
+        if not text:
+            return None, "Model returned empty feedback."
+        return text, None
+    except ValueError as e:
+        return None, str(e)
+    except Exception as e:
+        return None, f"Evaluation failed: {e!s}"

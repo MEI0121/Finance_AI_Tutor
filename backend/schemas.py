@@ -83,3 +83,15 @@ class GenerateQuizRequest(BaseModel):
 class GenerativeErrorResponse(BaseModel):
     error: str
     detail: str | None = None
+
+
+class EvaluateQuizRequest(BaseModel):
+    question_text: str = Field(..., description="Full quiz question stem.")
+    selected_option: str = Field(
+        ...,
+        description="The option the learner chose (e.g. label + text).",
+    )
+    is_correct: bool = Field(
+        ...,
+        description="Whether that option matches the keyed correct answer.",
+    )

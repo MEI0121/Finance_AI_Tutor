@@ -1,6 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import remarkMath from "remark-math";
+import rehypeKatex from "rehype-katex";
 
 import { API_BASE } from "@/lib/api";
 
@@ -13,6 +17,14 @@ const CHAPTERS: { id: ChapterId; label: string }[] = [
 ];
 
 const KEYS = ["A", "B", "C", "D"] as const;
+
+/** Strip "A. " / "b) " etc. when the API duplicated the letter in option text. */
+function stripLeadingOptionPrefix(raw: string): string {
+  return raw.replace(/^\s*[A-Da-d][.)]\s*/, "").trim();
+}
+
+const mdPlugins = [remarkGfm, remarkMath];
+const rehypePlugins = [rehypeKatex];
 
 type ApiQuestion = {
   question: string;
@@ -29,7 +41,17 @@ type AiQuizProps = {
   onOpenChatWithMessage?: (message: string) => void;
 };
 
-export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
+function QuizFeedbackMarkdown({ children }: { children: string }) {
+  return (
+    <div className="slide-markdown max-w-none select-text text-[0.9375rem] leading-relaxed">
+      <ReactMarkdown remarkPlugins={mdPlugins} rehypePlugins={rehypePlugins}>
+        {children}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
+export function AiQuiz(_props: AiQuizProps) {
   const [chapter, setChapter] = useState<ChapterId>("single");
   const [questions, setQuestions] = useState<ApiQuestion[]>([]);
   const [qIndex, setQIndex] = useState(0);
@@ -38,6 +60,9 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
   );
   /** Only lock options after a correct submit; wrong answers allow retry. */
   const [feedback, setFeedback] = useState<"idle" | "wrong" | "correct">("idle");
+  const [feedbackMd, setFeedbackMd] = useState("");
+  const [evalLoading, setEvalLoading] = useState(false);
+  const [evalError, setEvalError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,6 +70,13 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
     Partial<Record<ChapterId, ApiQuestion[]>>
   >({});
   const [fetchNonce, setFetchNonce] = useState(0);
+
+  const resetQuestionFeedback = useCallback(() => {
+    setFeedback("idle");
+    setFeedbackMd("");
+    setEvalError(null);
+    setEvalLoading(false);
+  }, []);
 
   const runFetch = useCallback(async (sub: ChapterId, signal: AbortSignal) => {
     setLoading(true);
@@ -84,7 +116,7 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
         setQuestions(qs);
         setQIndex(0);
         setSelected(null);
-        setFeedback("idle");
+        resetQuestionFeedback();
         setError(null);
       }
     } catch (e) {
@@ -101,7 +133,7 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
         setLoading(false);
       }
     }
-  }, []);
+  }, [resetQuestionFeedback]);
 
   useEffect(() => {
     const cached = quizCache[chapter];
@@ -109,7 +141,7 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
       setQuestions(cached);
       setQIndex(0);
       setSelected(null);
-      setFeedback("idle");
+      resetQuestionFeedback();
       setError(null);
       setLoading(false);
       return;
@@ -118,8 +150,6 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
     const controller = new AbortController();
     runFetch(chapter, controller.signal);
     return () => controller.abort();
-    // quizCache is read for hits but omitted from deps so a post-fetch cache update
-    // does not reset the current question index.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- cache keyed by `chapter` + `fetchNonce`
   }, [chapter, fetchNonce, runFetch]);
 
@@ -127,14 +157,46 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
   const canPrevQ = qIndex > 0;
   const canNextQ = qIndex < questions.length - 1;
 
-  const chapterLabel =
-    CHAPTERS.find((c) => c.id === chapter)?.label ?? chapter;
-
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (selected == null || !q) {
       return;
     }
-    setFeedback(selected === q.correct_answer ? "correct" : "wrong");
+    const isCorrect = selected === q.correct_answer;
+    setFeedback(isCorrect ? "correct" : "wrong");
+    setEvalLoading(true);
+    setEvalError(null);
+    setFeedbackMd("");
+
+    const optIdx = KEYS.indexOf(selected);
+    const optText =
+      optIdx >= 0 ? stripLeadingOptionPrefix(q.options[optIdx] ?? "") : "";
+    const selectedOption = `${selected}. ${optText}`;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/evaluate_quiz`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          question_text: q.question,
+          selected_option: selectedOption,
+          is_correct: isCorrect,
+        }),
+      });
+      const data = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        feedback_md?: string;
+      };
+      if (!res.ok || !data.ok || typeof data.feedback_md !== "string") {
+        setEvalError(data.error || `Request failed (${res.status})`);
+        return;
+      }
+      setFeedbackMd(data.feedback_md);
+    } catch {
+      setEvalError("Unable to reach the server. Is the evaluation API running?");
+    } finally {
+      setEvalLoading(false);
+    }
   };
 
   const handleRegenerate = () => {
@@ -153,18 +215,6 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
       return next;
     });
     setFetchNonce((n) => n + 1);
-  };
-
-  const handleSocratic = () => {
-    if (!q || selected == null || !onOpenChatWithMessage) {
-      return;
-    }
-    const optIdx = KEYS.indexOf(selected);
-    const optText = optIdx >= 0 ? q.options[optIdx] : "";
-    const selectedLabel = `${selected}. ${optText}`;
-    onOpenChatWithMessage(
-      `I was doing a quiz on ${chapterLabel} and incorrectly chose ${selectedLabel} for the question: '${q.question}'. Can you guide me to the correct answer using the Socratic method?`
-    );
   };
 
   if (loading) {
@@ -200,6 +250,16 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
 
   const isCorrect = feedback === "correct";
   const isWrong = feedback === "wrong";
+
+  const feedbackBoxTone = evalError
+    ? "border-red-200/90 bg-red-50/95 text-red-950 ring-red-900/10"
+    : isCorrect && feedbackMd && !evalLoading
+      ? "border-emerald-200/90 bg-gradient-to-br from-emerald-50/95 to-emerald-50/60 text-zinc-900 ring-emerald-900/10"
+      : isWrong && feedbackMd && !evalLoading
+        ? "border-amber-200/70 bg-gradient-to-br from-amber-50/90 via-amber-50/40 to-sky-50/60 text-zinc-900 ring-amber-900/10"
+        : evalLoading || feedback !== "idle"
+          ? "border-zinc-200/80 bg-white text-zinc-700 ring-zinc-900/5"
+          : "border-dashed border-zinc-200/90 bg-zinc-50/50 text-zinc-600 ring-zinc-900/[0.04]";
 
   return (
     <div className="mx-auto w-full max-w-3xl space-y-6 pb-6">
@@ -277,35 +337,26 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
                   setSelected(key);
                   if (feedback === "wrong") {
                     setFeedback("idle");
+                    setFeedbackMd("");
+                    setEvalError(null);
                   }
                 }}
               />
               <span className="text-sm leading-relaxed text-zinc-800 sm:text-[0.95rem]">
                 <span className="font-semibold text-zinc-600">{key}. </span>
-                {q.options[i]}
+                {stripLeadingOptionPrefix(q.options[i] ?? "")}
               </span>
             </label>
           ))}
         </div>
 
-        {feedback !== "idle" ? (
-          <div
-            className={`mt-6 rounded-xl border px-4 py-3 text-sm font-semibold ${
-              isCorrect
-                ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-                : "border-amber-200 bg-amber-50 text-amber-950"
-            }`}
-            role="status"
-          >
-            {isCorrect ? "Correct." : "Incorrect."}
-          </div>
-        ) : null}
-
         <div className="mt-6 flex flex-wrap items-center gap-3">
           <button
             type="button"
-            disabled={selected == null || feedback === "correct"}
-            onClick={handleSubmit}
+            disabled={
+              selected == null || feedback === "correct" || evalLoading
+            }
+            onClick={() => void handleSubmit()}
             className="rounded-xl bg-emerald-600 px-6 py-2.5 text-sm font-semibold text-white shadow-md shadow-emerald-600/25 transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
           >
             Submit answer
@@ -317,7 +368,7 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
               onClick={() => {
                 setQIndex((i) => i - 1);
                 setSelected(null);
-                setFeedback("idle");
+                resetQuestionFeedback();
               }}
               className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40"
             >
@@ -329,7 +380,7 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
               onClick={() => {
                 setQIndex((i) => i + 1);
                 setSelected(null);
-                setFeedback("idle");
+                resetQuestionFeedback();
               }}
               className="rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 disabled:opacity-40"
             >
@@ -338,35 +389,49 @@ export function AiQuiz({ onOpenChatWithMessage }: AiQuizProps) {
           </div>
         </div>
 
-        {isWrong && onOpenChatWithMessage ? (
-          <div className="mt-6">
-            <button
-              type="button"
-              onClick={handleSocratic}
-              className="w-full rounded-xl border-2 border-emerald-600 bg-emerald-50/90 px-4 py-3.5 text-center text-sm font-semibold text-emerald-950 shadow-sm transition hover:bg-emerald-100 sm:px-6"
-            >
-              I don&apos;t understand, guide me Socratically
-            </button>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="rounded-2xl border border-dashed border-zinc-300 bg-zinc-50/80 px-5 py-6">
-        <p className="text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-zinc-500">
-          Explanation
-        </p>
-        <p className="mt-2 text-sm leading-relaxed text-zinc-600">
-          After you submit, compare your reasoning with the explanation below.
-          If you are stuck, use the Socratic button to work through it in chat.
-        </p>
-        <div className="mt-4 max-h-72 min-h-[4.5rem] overflow-y-auto rounded-xl border border-zinc-200/80 bg-white/90 px-4 py-3 text-sm text-zinc-700">
-          {feedback !== "idle" ? (
-            <p className="whitespace-pre-wrap leading-relaxed">{q.explanation}</p>
-          ) : (
-            <span className="text-zinc-500">
-              Submit an answer to see the explanation for this question.
-            </span>
-          )}
+        <div
+          className={`mt-6 rounded-2xl border px-4 py-4 shadow-sm ring-1 sm:px-5 sm:py-5 ${feedbackBoxTone}`}
+          role="region"
+          aria-label="AI feedback"
+        >
+          <p className="mb-3 text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+            {evalError
+              ? "Could not load feedback"
+              : isCorrect
+                ? "Why this is correct"
+                : isWrong
+                  ? "Socratic guidance"
+                  : "AI feedback"}
+          </p>
+          {evalLoading ? (
+            <div className="flex items-center gap-3 py-2 text-sm font-medium text-zinc-600">
+              <div className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-emerald-600 border-t-transparent" />
+              AI is analyzing your logic…
+            </div>
+          ) : null}
+          {evalError && !evalLoading ? (
+            <p className="text-sm leading-relaxed">{evalError}</p>
+          ) : null}
+          {!evalLoading && !evalError && feedbackMd ? (
+            <QuizFeedbackMarkdown>{feedbackMd}</QuizFeedbackMarkdown>
+          ) : null}
+          {!evalLoading &&
+          !evalError &&
+          !feedbackMd &&
+          feedback === "idle" ? (
+            <p className="text-sm leading-relaxed text-zinc-500">
+              Submit your answer for step-by-step feedback. Wrong answers get
+              Socratic hints here—no need to leave the quiz.
+            </p>
+          ) : null}
+          {!evalLoading &&
+          !evalError &&
+          !feedbackMd &&
+          feedback !== "idle" ? (
+            <p className="text-sm leading-relaxed text-zinc-500">
+              Preparing your feedback…
+            </p>
+          ) : null}
         </div>
       </div>
     </div>

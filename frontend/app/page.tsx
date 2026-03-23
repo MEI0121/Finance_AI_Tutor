@@ -406,7 +406,7 @@ export default function Home() {
               <div
                 className="inline-flex rounded-full bg-zinc-100/95 p-1 ring-1 ring-zinc-200/90"
                 role="tablist"
-                aria-label="Textbook, slides, or quiz"
+                aria-label="Textbook, slides, or AI quiz"
               >
                 <button
                   type="button"
@@ -448,7 +448,7 @@ export default function Home() {
                   }`}
                 >
                   <span aria-hidden>📝</span>
-                  <span className="hidden sm:inline">Target Quiz</span>
+                  <span className="hidden sm:inline">AI Quiz</span>
                 </button>
               </div>
             </div>
