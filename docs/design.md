@@ -60,3 +60,13 @@ While this PoC demonstrates a robust pedagogical framework, scaling it to a prod
 1. **Enterprise Multi-Modal Parsing:** Transitioning from PyMuPDF to an enterprise OCR solution (like LlamaParse or Unstructured.io) to perfectly extract nested tabular data and financial charts from the CFA curriculum.
 2. **GraphRAG Integration:** Upgrading from standard semantic ChromaDB similarity to entity-based Knowledge Graphs (GraphRAG). This would allow the AI Tutor to draw cross-chapter connections (e.g., linking Reading 22 DDMs to Reading 24 Free Cash Flow models).
 3. **Persistent Analytics (PostgreSQL):** Storing user performance, frequent misconceptions, and LangGraph checkpoint states in a managed database. This would allow curriculum designers to identify systemic content gaps based on aggregated learner telemetry.
+
+---
+
+## 6. Content Sources
+
+As per the evaluation constraints, the following placeholder content sources were utilized to demonstrate the multi-modal pedagogical flow:
+
+* **Primary Textbook:** *Discounted Dividend Valuation.pdf* (Provided by task owner via internal link).
+* **Video Content:** Embedded YouTube educational content via iframe (e.g., publicly available CFA prep videos demonstrating DDMs).
+* **Slide Content:** Dynamically generated via LLM based strictly on the retrieved PDF chunks, rendered locally using `react-markdown` and `rehype-katex`.
