@@ -1,18 +1,18 @@
 # Pedagogical Design: Finance AI Tutor
 
-This document outlines the pedagogical and architectural decisions behind the Finance AI Tutor. Rather than a reactive "Q&A chatbot," this system implements a **State-Machine-Driven Progressive Scaffolding** architecture to emulate a human tutor's cognitive sequencing.
+This document outlines the pedagogical and architectural decisions behind the Finance AI Tutor. Rather than a reactive "Q&A chatbot," this system implements a **User-Led Discovery Flow with a Supportive LangGraph Orchestrator** to emulate guided, context-rich learning while preserving learner agency.
 
 ---
 
-## 1. Lesson Flow (The LangGraph State Machine)
+## 1. Lesson Flow (User-Led Discovery with LangGraph)
 
-The pedagogical flow is explicitly modeled as a Directed Cyclic Graph (DCG) using `LangGraph`. This ensures the AI maintains strict control over the lesson sequence, preventing the learner from skipping foundational concepts.
+The pedagogical flow is modeled as a Directed Cyclic Graph (DCG) using `LangGraph`, with guidance-first orchestration rather than hard gating. The tutor provides contextual explanations, memory-aware follow-ups, and predictive suggestions, while the learner can move across topics and workspace surfaces (Textbook, Slides, Quiz, Video) at their own pace.
 
 **Core Nodes in the State Machine:**
 1. **`greeting` & `planning`:** The AI assesses the user's initial intent and generates a structured learning plan (sub-topic breakdown) based on the CFA Reading 22 curriculum.
 2. **`micro_teach`:** Delivers bite-sized, RAG-grounded explanations of specific concepts (e.g., the Gordon Growth Model).
-3. **`qna` (Interactive Sandbox):** Allows the learner to ask clarifying questions about the current micro-step without advancing the curriculum. Includes **Predictive Follow-up UX** (`---SUGGESTIONS---`) to eliminate "prompt blank paralysis."
-4. **`assess`:** Generates dynamic Multiple Choice Questions (MCQs) to verify comprehension before allowing progression.
+3. **`qna` (Interactive Sandbox):** Allows the learner to ask clarifying questions, branch into direct exploration, and continue through contextual guidance. Includes **Predictive Follow-up UX** (`---SUGGESTIONS---`) to eliminate "prompt blank paralysis."
+4. **`assess`:** Generates dynamic Multiple Choice Questions (MCQs) when requested, enabling optional comprehension checks.
 5. **`remediate`:** Triggered upon an incorrect assessment. Provides Socratic hints.
 6. **`feynman`:** The capstone node. Upon completing the chapter, the learner must explain the core concept in their own words to prove mastery.
 
@@ -20,23 +20,24 @@ The pedagogical flow is explicitly modeled as a Directed Cyclic Graph (DCG) usin
 
 ## 2. Adaptive Logic & Remediation
 
-The system's routing logic strictly separates "exploration" from "evaluation".
+The system's routing logic separates conversational exploration from evaluation while remaining learner-directed.
 
-- **Advancing vs. Remediating:** When in the `assess` node, the AI strictly evaluates the user's answer against a mathematical proof. 
-  - *Correct Answer:* The graph advances the state to the next `micro_teach` step, or the final `feynman` node if the lesson is complete.
-  - *Wrong Answer:* The graph forcibly routes the user to the `remediate` node.
+- **Advancing vs. Remediating:** When in the `assess` node, the AI evaluates the learner response against the generated question and retrieved context.
+  - *Correct Answer:* The graph can suggest moving to the next `micro_teach` step, or to the final `feynman` checkpoint if the planned sequence is complete.
+  - *Wrong Answer:* The graph routes to `remediate` for Socratic hinting on the active quiz loop.
 - **Socratic Diagnostic CoT:** During remediation, the AI does *not* reveal the correct option. It applies a **Diagnostic Chain-of-Thought (CoT)**, stepping through the algebra to help the learner locate their specific mathematical error (e.g., confusing $D_0$ with $D_1$).
-- **The "Circuit Breaker" (Edge Case Handling):** To prevent an infinite loop of frustration, the state machine tracks `remediation_attempts`. If `attempts >= 3` on a single concept, the AI triggers a "Circuit Breaker"—it gently breaks the Socratic loop, provides the full step-by-step resolution, and moves the learner forward to maintain momentum.
+- **The "Circuit Breaker" (Edge Case Handling):** To prevent an infinite loop of frustration, the state machine tracks `remediation_attempts`. If `attempts >= 3` on a single concept, the AI triggers a "Circuit Breaker"—it gently breaks the Socratic loop, provides a concise step-by-step resolution, and returns to a flexible exploration state to maintain momentum.
 
 ---
 
 ## 3. Content Integration & Multi-Modality
 
-The workspace is divided into a **Static/Generative UI Pane** (Left) and an **Adaptive Tutor Pane** (Right).
+The workspace is divided into a **Static/Generative UI Pane** (Left) and an **Adaptive Tutor Pane** (Right), forming a unified multi-modal learning surface.
 
 - **High-Fidelity RAG Pipeline:** CFA textbooks rely heavily on complex formulas. Standard PDF chunkers destroy semantic formatting. We utilized **PyMuPDF (`fitz`)** with a large `CHUNK_SIZE = 4000` and `CHUNK_OVERLAP = 800`. This allows the LLM to ingest entire multi-step mathematical derivations in a single context window.
 - **Dynamic AI Slides & Quizzes:** Content is not hardcoded. The system synthesizes retrieved RAG chunks into Markdown/KaTeX-formatted presentation slides and rigorous MCQs on the fly.
-- **Two-Page Spread & Video:** The UI natively embeds YouTube video players and a custom Two-Page Spread PDF reader to emulate a premium desktop learning environment, minimizing context switching.
+- **Multi-Modal Workspace Core:** Slides, Quiz, Video, and textbook chat coexist in one workspace so learners can switch modes fluidly without losing context.
+- **PDF-to-Chat Interactivity:** The custom Two-Page Spread PDF reader plus chat highlight/Q&A loop is the primary bridge between textbook evidence and tutor guidance.
 
 ---
 
@@ -60,6 +61,13 @@ While this PoC demonstrates a robust pedagogical framework, scaling it to a prod
 1. **Enterprise Multi-Modal Parsing:** Transitioning from PyMuPDF to an enterprise OCR solution (like LlamaParse or Unstructured.io) to perfectly extract nested tabular data and financial charts from the CFA curriculum.
 2. **GraphRAG Integration:** Upgrading from standard semantic ChromaDB similarity to entity-based Knowledge Graphs (GraphRAG). This would allow the AI Tutor to draw cross-chapter connections (e.g., linking Reading 22 DDMs to Reading 24 Free Cash Flow models).
 3. **Persistent Analytics (PostgreSQL):** Storing user performance, frequent misconceptions, and LangGraph checkpoint states in a managed database. This would allow curriculum designers to identify systemic content gaps based on aggregated learner telemetry.
+4. **Strict Progression Logic (Enterprise Roadmap):** Optional hard-gating flows (e.g., quiz-completion enforcement before advancing) can be added for enterprise deployments that require formal progression control. The current Research PoC intentionally prioritizes flexibility and learner agency.
+
+---
+
+## Known Limitation (Current PoC Behavior)
+
+- **Suggestions are Guidance, Not Locks:** Predictive suggestions currently act as recommended next steps and quick prompts. They intentionally do not hard-lock UI navigation or progression, prioritizing student-led learning and learner agency.
 
 ---
 

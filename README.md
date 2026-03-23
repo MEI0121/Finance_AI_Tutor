@@ -4,7 +4,7 @@
 > 
 > *Target Module: CFA Level II Equity Valuation - Reading 22 (Discounted Dividend Valuation)*
 
-This repository contains the end-to-end Proof of Concept (PoC) for an AI-driven, multi-modal teaching platform. Moving beyond traditional "reactive chatbots," this system implements a pedagogical state machine to actively sequence content, check comprehension via diagnostic Chain-of-Thought (CoT), and adapt learning pacing based on the user's cognitive state.
+This repository contains the end-to-end Proof of Concept (PoC) for an AI-driven, multi-modal teaching platform. Moving beyond traditional "reactive chatbots," this system implements a user-led discovery flow where a LangGraph orchestrator provides contextual guidance, predictive suggestions, and RAG-grounded support while learners navigate topics, Slides, and Quizzes at their own pace.
 
 ---
 
@@ -39,9 +39,9 @@ Once the containers are running and the ingestion script finishes building the p
 ## 🏗️ Architecture
 
 ### System Description
-The platform is architected around a decoupled **Generative UI Client** and a **Pedagogical State Machine Backend**. 
+The platform is architected around a decoupled **Generative UI Client** and a **Supportive LangGraph Orchestrator Backend**. 
 
-When a learner interacts with the platform (e.g., highlighting a PDF text, answering a generated quiz, or asking a direct question), the request is sent to the backend's LangGraph orchestrator. Instead of a single LLM call, the graph routes the cognitive state through specialized nodes (`assess`, `remediate`, `micro_teach`, `feynman`). The graph communicates with a persistent Chroma vector database, which utilizes a high-fidelity PyMuPDF ingestion pipeline to ensure mathematical and structural integrity of the CFA textbook.
+When a learner interacts with the platform (e.g., highlighting a PDF text, answering a generated quiz, or asking a direct question), the request is sent to the backend's LangGraph orchestrator. Instead of a single LLM call, the graph manages conversation memory and RAG context retrieval across specialized nodes (`planning`, `qna`, `micro_teach`, `assess`, `remediate`, `feynman`). In this Research PoC, the graph is intentionally guidance-first (not rigidly enforcement-first), while stricter progression controls are reserved for roadmap enterprise modes. The graph communicates with a persistent Chroma vector database, which utilizes a high-fidelity PyMuPDF ingestion pipeline to ensure mathematical and structural integrity of the CFA textbook.
 
 ### Tech Stack & Rationale
 | Layer | Technology | Rationale |
@@ -87,7 +87,7 @@ finance-ai-tutor/
 
 ## 🧠 Design Decisions
 
-The core engineering effort of this PoC was spent solving critical LLM failure modes in educational contexts (e.g., mathematical hallucinations, premature JSON guessing, and passive UX).
+The core engineering effort of this PoC was spent solving critical LLM failure modes in educational contexts (e.g., mathematical hallucinations, premature JSON guessing, and passive UX), while centering learner agency in a multi-modal workspace (Slides, Quiz, Video) tightly connected to textbook-grounded chat.
 
 Please refer to the comprehensive pedagogical and architectural design document here:
 👉 **[docs/design.md](./docs/design.md)** *Includes detailed breakdowns of:*
