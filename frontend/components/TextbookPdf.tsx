@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -17,9 +17,10 @@ export function TextbookPdf() {
   const [containerWidth, setContainerWidth] = useState<number | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [leftPage, setLeftPage] = useState(1);
-  const [pageInput, setPageInput] = useState("1");
+  const [pageMenuOpen, setPageMenuOpen] = useState(false);
 
   const measureRef = useRef<HTMLDivElement>(null);
+  const pageMenuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     pdfjs.GlobalWorkerOptions.workerSrc = PDF_WORKER_URL;
@@ -50,7 +51,7 @@ export function TextbookPdf() {
     if (numPages == null || numPages < 1) {
       return;
     }
-    const maxLeft = Math.max(1, numPages - 1);
+    const maxLeft = Math.max(1, numPages);
     setLeftPage((prev) => {
       const next = Math.max(1, Math.min(prev, maxLeft));
       return next;
@@ -58,26 +59,36 @@ export function TextbookPdf() {
   }, [numPages]);
 
   useEffect(() => {
-    setPageInput(String(leftPage));
-  }, [leftPage]);
-
-  const commitPageInput = useCallback(() => {
-    if (numPages == null || numPages < 1) {
+    if (!pageMenuOpen) {
       return;
     }
-    const parsed = parseInt(pageInput, 10);
-    if (Number.isNaN(parsed)) {
-      setPageInput(String(leftPage));
-      return;
-    }
-    const clamped = Math.max(1, Math.min(parsed, numPages - 1));
-    setLeftPage(clamped);
-    setPageInput(String(clamped));
-  }, [numPages, pageInput, leftPage]);
+    const onPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null;
+      if (target && !pageMenuRef.current?.contains(target)) {
+        setPageMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [pageMenuOpen]);
 
-  const canPrev = numPages != null && leftPage > 1;
-  const canNext =
-    numPages != null && numPages >= 2 && leftPage < numPages - 1;
+  const clampPage = (page: number, total: number | null): number => {
+    if (total == null || total < 1) {
+      return 1;
+    }
+    return Math.max(1, Math.min(page, total));
+  };
+
+  const safeLeftPage = clampPage(leftPage, numPages);
+  const spreadLeftPage =
+    numPages != null && numPages >= 2 && safeLeftPage >= numPages
+      ? numPages - 1
+      : safeLeftPage;
+  const rightPage =
+    numPages != null && spreadLeftPage + 1 <= numPages ? spreadLeftPage + 1 : null;
+
+  const canPrev = numPages != null && safeLeftPage > 1;
+  const canNext = numPages != null && safeLeftPage < numPages;
 
   const pageWidthEach =
     containerWidth != null && containerWidth > 0
@@ -136,32 +147,40 @@ export function TextbookPdf() {
                       style={{ width: pageWidthEach }}
                     >
                       <Page
-                        key={`spread-left-${leftPage}`}
-                        pageNumber={leftPage}
+                        key={`spread-left-${spreadLeftPage}`}
+                        pageNumber={spreadLeftPage}
                         width={pageWidthEach}
                         renderTextLayer
                         renderAnnotationLayer
                         className="[&_.react-pdf__Page__textContent]:select-text [&_.react-pdf__Page__canvas]:bg-white"
                       />
                     </div>
-                    <div
-                      className="shrink-0 overflow-hidden rounded-r-2xl border-l border-white/80 bg-white shadow-[-4px_0_24px_-8px_rgba(0,0,0,0.18)] ring-1 ring-zinc-900/5"
-                      style={{ width: pageWidthEach }}
-                    >
-                      <Page
-                        key={`spread-right-${leftPage + 1}`}
-                        pageNumber={leftPage + 1}
-                        width={pageWidthEach}
-                        renderTextLayer
-                        renderAnnotationLayer
-                        className="[&_.react-pdf__Page__textContent]:select-text [&_.react-pdf__Page__canvas]:bg-white"
+                    {rightPage != null ? (
+                      <div
+                        className="shrink-0 overflow-hidden rounded-r-2xl border-l border-white/80 bg-white shadow-[-4px_0_24px_-8px_rgba(0,0,0,0.18)] ring-1 ring-zinc-900/5"
+                        style={{ width: pageWidthEach }}
+                      >
+                        <Page
+                          key={`spread-right-${rightPage}`}
+                          pageNumber={rightPage}
+                          width={pageWidthEach}
+                          renderTextLayer
+                          renderAnnotationLayer
+                          className="[&_.react-pdf__Page__textContent]:select-text [&_.react-pdf__Page__canvas]:bg-white"
+                        />
+                      </div>
+                    ) : (
+                      <div
+                        aria-hidden
+                        className="shrink-0 rounded-r-2xl border border-dashed border-zinc-300/80 bg-zinc-50/70"
+                        style={{ width: pageWidthEach }}
                       />
-                    </div>
+                    )}
                   </div>
                 ) : (
                   <div className="flex justify-center overflow-hidden rounded-2xl bg-white shadow-xl ring-1 ring-zinc-900/5">
                     <Page
-                      pageNumber={1}
+                      pageNumber={safeLeftPage}
                       width={Math.min(pageWidthEach, 900)}
                       renderTextLayer
                       renderAnnotationLayer
@@ -190,28 +209,57 @@ export function TextbookPdf() {
 
                   <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3">
                     <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-                      Left page
+                      Page
                     </span>
-                    <input
-                      type="number"
-                      min={1}
-                      max={numPages != null ? Math.max(1, numPages - 1) : 1}
-                      value={pageInput}
-                      onChange={(e) => setPageInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          e.preventDefault();
-                          commitPageInput();
-                        }
-                      }}
-                      onBlur={() => commitPageInput()}
-                      className="w-16 rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-center text-sm font-semibold tabular-nums text-zinc-900 shadow-inner outline-none ring-emerald-500/40 focus:border-emerald-400 focus:ring-2"
-                      aria-label="Go to left page of spread"
-                    />
-                    <span className="hidden text-xs text-zinc-400 sm:inline">
-                      of spread ·{" "}
-                      <span className="tabular-nums text-zinc-600">
-                        {leftPage}–{Math.min(leftPage + 1, numPages ?? 1)}
+                    <div ref={pageMenuRef} className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setPageMenuOpen((open) => !open)}
+                        className="inline-flex min-w-[5.5rem] items-center justify-between gap-2 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-sm font-semibold tabular-nums text-zinc-900 shadow-sm outline-none ring-emerald-500/40 transition hover:bg-zinc-50 focus:border-emerald-400 focus:ring-2"
+                        aria-label="Choose page"
+                        aria-haspopup="listbox"
+                        aria-expanded={pageMenuOpen}
+                      >
+                        <span>{safeLeftPage}</span>
+                        <span className="text-xs text-zinc-500" aria-hidden>
+                          ▾
+                        </span>
+                      </button>
+                      {pageMenuOpen ? (
+                        <ul
+                          role="listbox"
+                          aria-label="Page options"
+                          className="absolute bottom-full left-0 z-30 mb-2 max-h-40 w-full overflow-y-auto rounded-xl border border-zinc-200 bg-white py-1 shadow-xl ring-1 ring-zinc-900/5"
+                        >
+                          {Array.from({ length: numPages ?? 1 }, (_, idx) => {
+                            const page = idx + 1;
+                            const selected = page === safeLeftPage;
+                            return (
+                              <li key={page}>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setLeftPage(clampPage(page, numPages));
+                                    setPageMenuOpen(false);
+                                  }}
+                                  className={`w-full px-3 py-1.5 text-left text-sm tabular-nums transition ${
+                                    selected
+                                      ? "bg-emerald-50 font-semibold text-emerald-700"
+                                      : "text-zinc-700 hover:bg-zinc-100"
+                                  }`}
+                                >
+                                  {page}
+                                </button>
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      ) : null}
+                    </div>
+                    <span className="text-xs text-zinc-500">
+                      of{" "}
+                      <span className="font-semibold tabular-nums text-zinc-700">
+                        {numPages ?? 1}
                       </span>
                     </span>
                   </div>
@@ -223,9 +271,7 @@ export function TextbookPdf() {
                       if (numPages == null) {
                         return;
                       }
-                      setLeftPage((p) =>
-                        Math.min(Math.max(1, numPages - 1), p + 1)
-                      );
+                      setLeftPage((p) => clampPage(p + 1, numPages));
                     }}
                     className="inline-flex min-h-[2.5rem] items-center gap-2 rounded-xl border border-zinc-200 bg-zinc-50 px-4 py-2 text-sm font-medium text-zinc-800 shadow-sm transition hover:bg-white hover:shadow disabled:cursor-not-allowed disabled:opacity-40"
                   >

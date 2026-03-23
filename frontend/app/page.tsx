@@ -4,9 +4,13 @@ import {
   BookOpen,
   ChevronDown,
   MessageCircle,
+  NotebookPen,
   Send,
   Sparkles,
+  Target,
+  UserRound,
   Video,
+  Settings,
   X,
 } from "lucide-react";
 import dynamic from "next/dynamic";
@@ -37,6 +41,29 @@ const TextbookPdf = dynamic(
 );
 
 const CHAT_URL = "http://127.0.0.1:8000/chat";
+
+/** Split tutor reply: main markdown vs clickable follow-up pills (must match backend). */
+const CHAT_SUGGESTIONS_MARKER = "---SUGGESTIONS---";
+
+function parseChatSuggestions(content: string): {
+  mainContent: string;
+  suggestions: string[];
+} {
+  const idx = content.indexOf(CHAT_SUGGESTIONS_MARKER);
+  if (idx === -1) {
+    return { mainContent: content, suggestions: [] };
+  }
+  const mainContent = content.slice(0, idx).trimEnd();
+  const tail = content.slice(idx + CHAT_SUGGESTIONS_MARKER.length).trim();
+  const suggestions: string[] = [];
+  for (const rawLine of tail.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (/^(\*|-)\s+/.test(line)) {
+      suggestions.push(line.replace(/^(\*|-)\s+/, "").trim());
+    }
+  }
+  return { mainContent, suggestions };
+}
 
 /** Bootstrap user message from run_tutor_flow; hidden in UI but kept in state. */
 const HIDDEN_BOOTSTRAP_USER_MESSAGE = "Please begin the lesson.";
@@ -71,6 +98,14 @@ const INITIAL_TUTOR_STATE: TutorState = {
   concept_mastered: false,
   messages: [],
 };
+
+const ACTIVE_COURSE_NAME = "CFA Level II: Equity Valuation";
+const ACTIVE_CHAPTER_NAME = "Reading 22: Discounted Dividend Valuation";
+const MOCK_CHAPTERS = [
+  { id: "r22", label: ACTIVE_CHAPTER_NAME, active: true },
+  { id: "r23", label: "Reading 23: Free Cash Flow Valuation", active: false },
+  { id: "r24", label: "Reading 24: Market-Based Valuation", active: false },
+] as const;
 
 type ChatResponse = {
   state?: TutorState;
@@ -140,10 +175,15 @@ export default function Home() {
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("textbook");
   const [selectionPopover, setSelectionPopover] =
     useState<SelectionPopoverState | null>(null);
+  const [courseMenuOpen, setCourseMenuOpen] = useState(false);
+  const [profileMenuOpen, setProfileMenuOpen] = useState(false);
 
   const readingRef = useRef<HTMLDivElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const videoIframeRef = useRef<HTMLIFrameElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const courseMenuRef = useRef<HTMLDivElement>(null);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
   const bootstrapped = useRef(false);
 
   const applyChatResponse = useCallback((data: ChatResponse) => {
@@ -253,16 +293,31 @@ export default function Home() {
     lastRole === "assistant" &&
     lastIdx >= 0;
 
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isLoading]);
+
+  const submitChatMessage = useCallback(
+    (text: string) => {
+      if (isLoading || tutorState === null) {
+        return;
+      }
+      const trimmed = text.trim();
+      if (trimmed === "") {
+        return;
+      }
+      sendToTutor(trimmed, tutorState);
+    },
+    [isLoading, sendToTutor, tutorState]
+  );
+
   const handleSend = () => {
-    if (isLoading || tutorState === null) {
-      return;
-    }
     const trimmed = input.trim();
     if (trimmed === "") {
       return;
     }
     setInput("");
-    sendToTutor(trimmed, tutorState);
+    submitChatMessage(trimmed);
   };
 
   const handleQuizPick = (letter: string) => {
@@ -368,6 +423,34 @@ export default function Home() {
     return () => window.removeEventListener("scroll", onScroll, true);
   }, []);
 
+  useEffect(() => {
+    if (!courseMenuOpen) {
+      return;
+    }
+    const onDocMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (!courseMenuRef.current?.contains(target)) {
+        setCourseMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [courseMenuOpen]);
+
+  useEffect(() => {
+    if (!profileMenuOpen) {
+      return;
+    }
+    const onDocMouseDown = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (!profileMenuRef.current?.contains(target)) {
+        setProfileMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [profileMenuOpen]);
+
   const truncatedForMessage = (t: string, max = 1200) =>
     t.length > max ? `${t.slice(0, max)}…` : t;
 
@@ -377,18 +460,136 @@ export default function Home() {
       <aside className="flex w-full shrink-0 flex-col border-b border-zinc-800 bg-gradient-to-b from-zinc-950 to-zinc-900 text-zinc-100 md:w-52 md:border-b-0 md:border-r">
         <div className="flex items-center gap-2 border-b border-zinc-800/90 px-4 py-3">
           <BookOpen className="h-5 w-5 shrink-0 text-emerald-400" aria-hidden />
-          <span className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-zinc-500">
-            Knowledge
+          <span className="text-[0.66rem] font-semibold tracking-[0.08em] text-zinc-300">
+            Finance AI Tutor
           </span>
         </div>
-        <div className="flex flex-1 flex-col gap-4 px-4 py-5">
-          <div>
-            <p className="text-[0.6rem] font-semibold uppercase tracking-wider text-zinc-500">
-              Module
-            </p>
-            <p className="mt-1 text-sm font-medium leading-snug text-white">
-              {displayTopic}
-            </p>
+        <div className="flex flex-1 flex-col gap-4 px-4 py-4">
+          <div
+            ref={courseMenuRef}
+            className="relative rounded-xl border border-zinc-700/90 bg-zinc-900/70 px-3 py-3 shadow-sm ring-1 ring-zinc-700/50"
+          >
+            <button
+              type="button"
+              onClick={() => setCourseMenuOpen((open) => !open)}
+              className="flex w-full items-start justify-between gap-2 text-left"
+              aria-expanded={courseMenuOpen}
+              aria-haspopup="menu"
+              aria-label="Open course and chapter selector"
+            >
+              <div className="min-w-0">
+                <p className="text-[0.58rem] font-semibold uppercase tracking-[0.14em] text-zinc-400">
+                  {ACTIVE_COURSE_NAME}
+                </p>
+                <p className="mt-1 text-xs font-semibold leading-snug text-zinc-100">
+                  {ACTIVE_CHAPTER_NAME}
+                </p>
+              </div>
+              <ChevronDown
+                className={`mt-0.5 h-4 w-4 shrink-0 text-zinc-400 transition-transform ${
+                  courseMenuOpen ? "rotate-180" : ""
+                }`}
+                aria-hidden
+              />
+            </button>
+
+            {courseMenuOpen ? (
+              <div
+                role="menu"
+                className="absolute left-0 right-0 top-full z-30 mt-2 rounded-xl border border-zinc-700/90 bg-zinc-900 p-2 shadow-2xl ring-1 ring-zinc-700/60"
+              >
+                {MOCK_CHAPTERS.map((chapter) => (
+                  <button
+                    key={chapter.id}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      if (chapter.active) {
+                        setCourseMenuOpen(false);
+                        return;
+                      }
+                      setCourseMenuOpen(false);
+                      alert("Available in full version");
+                    }}
+                    className={`mb-1 flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs transition last:mb-0 ${
+                      chapter.active
+                        ? "cursor-default bg-emerald-500/15 text-emerald-200"
+                        : "bg-zinc-800/85 text-zinc-400 hover:bg-zinc-800"
+                    }`}
+                  >
+                    <span className="pr-2 leading-snug">{chapter.label}</span>
+                    {chapter.active ? (
+                      <span className="shrink-0 rounded-full bg-emerald-500/25 px-1.5 py-0.5 text-[0.58rem] font-semibold uppercase tracking-wide text-emerald-200">
+                        Active
+                      </span>
+                    ) : (
+                      <span className="shrink-0 rounded-full border border-zinc-600 bg-zinc-900 px-1.5 py-0.5 text-[0.58rem] font-semibold uppercase tracking-wide text-zinc-400">
+                        🔒 Pro
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <div ref={profileMenuRef} className="relative mt-auto">
+            <button
+              type="button"
+              onClick={() => setProfileMenuOpen((open) => !open)}
+              className="flex w-full items-center gap-2 rounded-xl border border-zinc-700/90 bg-zinc-900/70 px-2.5 py-2 text-left shadow-sm ring-1 ring-zinc-700/40 transition hover:bg-zinc-900"
+              aria-haspopup="menu"
+              aria-expanded={profileMenuOpen}
+            >
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-500/20 text-xs font-bold text-emerald-200 ring-1 ring-emerald-500/30">
+                JL
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-xs font-semibold text-zinc-100">
+                  Learner #42
+                </p>
+                <p className="text-[0.62rem] text-zinc-400">Workspace</p>
+              </div>
+              <ChevronDown
+                className={`h-4 w-4 shrink-0 text-zinc-400 transition-transform ${
+                  profileMenuOpen ? "rotate-180" : ""
+                }`}
+                aria-hidden
+              />
+            </button>
+            {profileMenuOpen ? (
+              <div
+                role="menu"
+                className="absolute bottom-full left-0 right-0 z-30 mb-2 rounded-xl border border-zinc-700/90 bg-zinc-900 p-1.5 shadow-2xl ring-1 ring-zinc-700/60"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-zinc-200 transition hover:bg-zinc-800 last:mb-0"
+                  onClick={() => setProfileMenuOpen(false)}
+                >
+                  <NotebookPen className="h-3.5 w-3.5 text-zinc-300" aria-hidden />
+                  My Notebooks
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="mb-1 flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-zinc-200 transition hover:bg-zinc-800 last:mb-0"
+                  onClick={() => setProfileMenuOpen(false)}
+                >
+                  <Target className="h-3.5 w-3.5 text-zinc-300" aria-hidden />
+                  Practice Bank
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-xs text-zinc-200 transition hover:bg-zinc-800"
+                  onClick={() => setProfileMenuOpen(false)}
+                >
+                  <Settings className="h-3.5 w-3.5 text-zinc-300" aria-hidden />
+                  Settings
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
       </aside>
@@ -598,6 +799,10 @@ export default function Home() {
               }
               const isUser = m.role === "user";
               const isLastAssistant = i === lastIdx;
+              const assistantParts =
+                !isUser && m.content.includes(CHAT_SUGGESTIONS_MARKER)
+                  ? parseChatSuggestions(m.content)
+                  : { mainContent: m.content, suggestions: [] as string[] };
               return (
                 <li key={`${i}-${m.role}`} className="flex flex-col gap-2">
                   <div
@@ -615,12 +820,27 @@ export default function Home() {
                       ) : (
                         <div className="prose prose-sm prose-zinc max-w-none [&_p]:my-2 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0 [&_ul]:my-2 [&_ol]:my-2 [&_li]:my-0.5 [&_code]:rounded-md [&_code]:bg-zinc-200/70 [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:text-[0.8125rem] [&_pre]:my-2 [&_pre]:max-w-full [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-zinc-900/90 [&_pre]:p-3 [&_pre]:text-zinc-100 [&_blockquote]:my-2 [&_blockquote]:border-l-zinc-300">
                           <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                            {m.content}
+                            {assistantParts.mainContent}
                           </ReactMarkdown>
                         </div>
                       )}
                     </div>
                   </div>
+                  {!isUser && assistantParts.suggestions.length > 0 ? (
+                    <div className="flex flex-row flex-wrap gap-2 pl-0.5">
+                      {assistantParts.suggestions.map((label, si) => (
+                        <button
+                          key={`${i}-sugg-${si}`}
+                          type="button"
+                          disabled={isLoading || tutorState === null}
+                          onClick={() => submitChatMessage(label)}
+                          className="cursor-pointer rounded-full border border-zinc-200/90 bg-zinc-100 px-3 py-1.5 text-left text-xs text-zinc-700 transition-colors hover:bg-zinc-200 disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
                   {isLastAssistant && showQuizButtons ? (
                     <div className="flex flex-wrap gap-2">
                       {(["A", "B", "C", "D"] as const).map((letter) => (
@@ -640,6 +860,7 @@ export default function Home() {
               );
             })}
           </ul>
+          <div ref={messagesEndRef} />
 
           {isLoading ? (
             <p className="mt-4 flex items-center gap-2 text-sm text-zinc-500">
@@ -726,6 +947,17 @@ export default function Home() {
             }
           >
             <span aria-hidden>🌐</span> Translate
+          </button>
+          <button
+            type="button"
+            className="flex items-center gap-2 rounded-lg px-3 py-2 text-left text-sm font-medium text-zinc-800 transition hover:bg-amber-50"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              setSelectionPopover(null);
+              alert("Added to notes (PoC mock)");
+            }}
+          >
+            <span aria-hidden>🔖</span> Add to Notes
           </button>
         </div>
       ) : null}

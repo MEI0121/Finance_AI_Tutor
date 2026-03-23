@@ -396,15 +396,27 @@ export function AiQuiz(_props: AiQuizProps) {
           role="region"
           aria-label="AI feedback"
         >
-          <p className="mb-3 text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-zinc-500">
-            {evalError
-              ? "Could not load feedback"
-              : isCorrect
-                ? "Why this is correct"
-                : isWrong
-                  ? "Socratic guidance"
-                  : "AI feedback"}
-          </p>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <p className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-zinc-500">
+              {evalError
+                ? "Could not load feedback"
+                : isCorrect
+                  ? "Why this is correct"
+                  : isWrong
+                    ? "Socratic guidance"
+                    : "AI feedback"}
+            </p>
+            {feedback !== "idle" ? (
+              <button
+                type="button"
+                onClick={() => alert("Added to Practice Bank (PoC mock)")}
+                className="inline-flex items-center gap-1.5 rounded-full border border-zinc-300 bg-white px-2.5 py-1 text-[0.65rem] font-semibold uppercase tracking-wide text-zinc-600 transition hover:bg-zinc-50"
+              >
+                <span aria-hidden>➕</span>
+                Add to Practice Bank
+              </button>
+            ) : null}
+          </div>
           {evalLoading ? (
             <div className="flex items-center gap-3 py-2 text-sm font-medium text-zinc-600">
               <div className="h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-emerald-600 border-t-transparent" />

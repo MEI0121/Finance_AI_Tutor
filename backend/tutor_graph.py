@@ -31,10 +31,26 @@ _chroma_lock = threading.Lock()
 # Default embed for the MVP curriculum topic (Discounted Dividend Valuation); overridable via state.
 DEFAULT_CURRENT_VIDEO_URL = "https://www.youtube.com/embed/-mQJ7a4U9Z8?si=xDlg2zON0SiUOP7-"
 
+SUGGESTIONS_MARKER = "---SUGGESTIONS---"
+
+
+def _suggestion_footer(*questions: str) -> str:
+    """Append programmatic follow-up pills (same marker/format as LLM PREDICTIVE FOLLOW-UP)."""
+    lines = "\n".join(f"* {q.strip()}" for q in questions if q.strip())
+    if not lines:
+        return ""
+    return f"\n\n{SUGGESTIONS_MARKER}\n{lines}"
+
+
 GENERIC_SESSION_GREETING = (
     "Hello! I'm your AI tutor for this session. I'm here to help you understand "
     "today's topic. Feel free to ask any specific questions, explore an idea, or let me know "
     "if you'd like a full walkthrough. No pressure—I'm here to help!"
+    + _suggestion_footer(
+        "Can you walk me through the full topic from the beginning?",
+        "What is the single most important idea I should understand first?",
+        "I have a specific question about a formula or example—can we dig in?",
+    )
 )
 
 IRONCLAD_TEMPLATE = """You are a strict, content-agnostic Finance AI Tutor.
@@ -50,7 +66,25 @@ CRITICAL RULES:
 4. ABSOLUTELY NO LaTeX formatting. DO NOT use \\[, \\], \\(, or \\). Format all formulas using simple plain text, e.g., Vt = D / (r - g).
 5. EXPLAIN LIKE I'M 5: Whenever you introduce a financial concept or formula, you MUST pair it with a simple, real-world analogy (e.g., renting an apartment, a lemonade stand, splitting a pizza) so it feels intuitive. Avoid academic jargon unless you briefly define it in plain words.
 
-TONE: Be warm, patient, and human. Sound like a friendly tutor in conversation, not a textbook. Hard cap: every assistant message to the learner MUST be at most 100 words unless a node explicitly overrides for internal grading only. Never nag the learner to take a quiz or test unless they explicitly ask for one."""
+TONE: Be warm, patient, and human. Sound like a friendly tutor in conversation, not a textbook. Hard cap: every assistant message to the learner MUST be at most 100 words unless a node explicitly overrides for internal grading only. Never nag the learner to take a quiz or test unless they explicitly ask for one.
+
+PREDICTIVE FOLLOW-UP RULE: At the very end of EVERY response you generate, you MUST provide 2 or 3 highly relevant follow-up questions the user might want to ask next to deepen their understanding.
+You MUST format them EXACTLY like this at the very bottom of your markdown output:
+---SUGGESTIONS---
+* [Follow-up Question 1]
+* [Follow-up Question 2]
+
+Replace the bracketed placeholders with real, specific questions (add a third line * ... if it helps). Nothing may appear after the last suggestion bullet. Word caps in the node instructions apply only to the main body above ---SUGGESTIONS---; the suggestion block does not count toward those caps."""
+
+PREDICTIVE_FOLLOW_UP_RULE = """
+PREDICTIVE FOLLOW-UP RULE: At the very end of EVERY response you generate, you MUST provide 2 or 3 highly relevant follow-up questions the user might want to ask next to deepen their understanding.
+You MUST format them EXACTLY like this at the very bottom of your markdown output:
+---SUGGESTIONS---
+* [Follow-up Question 1]
+* [Follow-up Question 2]
+
+Replace the bracketed placeholders with real, specific questions (add a third line * ... if it helps). Nothing may appear after the last suggestion bullet. Word caps in the node instructions apply only to the main body above ---SUGGESTIONS---; the suggestion block does not count toward those caps.
+""".strip()
 
 
 class TutorState(TypedDict, total=False):
@@ -208,6 +242,11 @@ def _base_prompt(topic: str, context: str) -> str:
     )
 
 
+def _learner_base_prompt(topic: str, context: str) -> str:
+    """Alias kept for compatibility; base prompt now carries predictive rule globally."""
+    return _base_prompt(topic, context)
+
+
 def _is_adhoc_session(state: TutorState) -> bool:
     """Ad-hoc Q&A path: single-step placeholder plan from greeting, not a formal 3-step curriculum."""
     if bool(state.get("is_adhoc_session")):
@@ -326,6 +365,7 @@ def _classify_greeting_intent(topic: str, user_text: str, context: str) -> str:
 
 CLASSIFIER (INTERNAL)
 The learner replied after your welcome. Decide if they want to learn something aligned with the CURRENT TOPIC and REFERENCE KNOWLEDGE.
+INTERNAL OVERRIDE: For this classifier task only, DO NOT output any ---SUGGESTIONS--- block.
 Output exactly one line:
 INTENT: DOMAIN
 or
@@ -380,6 +420,7 @@ def _classify_curriculum_vs_adhoc(topic: str, user_text: str, context: str) -> s
 
 ROUTER (INTERNAL — STRUCTURED OUTPUT)
 After the welcome message, classify what the learner wants next.
+INTERNAL OVERRIDE: For this router task only, DO NOT output any ---SUGGESTIONS--- block.
 
 STRICT RULES:
 - Return route "adhoc_qna" if they ask a direct question, want a formula, definition, or explanation of one idea, or sound like they want help on something specific right now.
@@ -423,6 +464,7 @@ def _route_micro_vs_assess(state: TutorState) -> str:
 
 ROUTER (INTERNAL — STRUCTURED OUTPUT ONLY)
 Classify the learner's LATEST message for routing after a micro-lesson or after your Q&A reply.
+INTERNAL OVERRIDE: For this router task only, DO NOT output any ---SUGGESTIONS--- block.
 
 Context snapshot:
 - CURRENT TOPIC: {topic}
@@ -490,6 +532,7 @@ def _route_plan_vs_micro(state: TutorState) -> str:
 
 ROUTER (INTERNAL — STRUCTURED OUTPUT)
 The learner is replying after you showed a step-by-step plan and asked if they are ready for step 1. They have NOT started micro-teaching yet.
+INTERNAL OVERRIDE: For this router task only, DO NOT output any ---SUGGESTIONS--- block.
 
 Proposed plan ({len(plan)} steps):
 {plan_lines}
@@ -546,6 +589,11 @@ def greeting_node(state: TutorState) -> TutorState:
         decline = (
             f"I hear you. That is outside the scope of our current lesson on {topic}. "
             "When you are ready, tell me what you would like to learn about this topic and we will continue."
+            + _suggestion_footer(
+                f"What should I focus on first for {topic}?",
+                "Can you give me a quick overview of what this lesson covers?",
+                "I'd like to get back on topic—where should we start?",
+            )
         )
         new_messages = _append_message(state.get("messages"), "assistant", decline)
         return {
@@ -583,6 +631,7 @@ def planning_node(state: TutorState) -> TutorState:
     extra = """
 
 NODE: TEACHING PLAN
+INTERNAL OVERRIDE: For this planning task only, DO NOT output any ---SUGGESTIONS--- block.
 - Propose exactly THREE short step titles for a micro-learning path tailored to the learner's goal.
 - Each title must be teachable using ONLY REFERENCE KNOWLEDGE.
 - Output ONLY a JSON array of 3 strings, no other text. Example: ["Concept intro", "Key formula", "Worked angle"]"""
@@ -603,6 +652,11 @@ NODE: TEACHING PLAN
         "Here is a simple 3-step path we can follow together:\n"
         f"{summary_lines}\n\n"
         f"{closing}"
+        + _suggestion_footer(
+            "What will we cover in step 1?",
+            "I'm not sure I'm ready—can we adjust the plan?",
+            "Yes—let's start step 1.",
+        )
     )
     new_messages = _append_message(state.get("messages"), "assistant", assistant_text)
     return {
@@ -632,7 +686,7 @@ def micro_teach_node(state: TutorState) -> TutorState:
     n_steps = len(plan) if plan else 1
     user_bit = _last_user_text(state.get("messages"))
     context = retrieve_context(f"{topic}\n{step_label}\n{user_bit}")
-    base_prompt = _base_prompt(topic, context)
+    base_prompt = _learner_base_prompt(topic, context)
     llm = _llm()
     extra = f"""
 
@@ -674,7 +728,7 @@ def qna_node(state: TutorState) -> TutorState:
     step_index = int(state.get("current_step_index", 0))
     step_label = plan[step_index] if plan and step_index < len(plan) else "this step"
     context = retrieve_context(f"{topic}\n{step_label}\n{_last_user_text(state.get('messages'))}")
-    base_prompt = _base_prompt(topic, context)
+    base_prompt = _learner_base_prompt(topic, context)
     llm = _llm()
     plan_review = bool(state.get("awaiting_plan_confirmation"))
     if plan_review:
@@ -732,6 +786,7 @@ def assess_node(state: TutorState) -> TutorState:
     quiz_asked = bool(state.get("quiz_asked"))
 
     if not quiz_asked:
+        learner_base = _learner_base_prompt(topic, context)
         quiz_extra = f"""
 
 NODE: DIAGNOSTIC MCQ (CURRENT MICRO-STEP ONLY)
@@ -743,7 +798,7 @@ NODE: DIAGNOSTIC MCQ (CURRENT MICRO-STEP ONLY)
 - Hard cap: entire MCQ block at most 100 words including options.
 - End by asking them to reply with the letter only (A, B, C, or D).
 """
-        system = base_prompt + quiz_extra
+        system = learner_base + quiz_extra
         reply = llm.invoke([SystemMessage(content=system)])
         quiz_text = reply.content if isinstance(reply.content, str) else str(reply.content)
         new_messages = _append_message(state.get("messages"), "assistant", quiz_text)
@@ -764,6 +819,7 @@ You are grading the learner's reply to this quiz:
 {quiz_text}
 
 Learner reply: {answer}
+INTERNAL OVERRIDE: For this grading task only, DO NOT output any ---SUGGESTIONS--- block.
 
 Output exactly one line in this format:
 VERDICT: CORRECT
@@ -791,12 +847,24 @@ Use CORRECT only if the chosen letter matches the best answer grounded strictly 
 
     plan_len = len(plan) if plan else 0
     new_idx = step_index + 1
-    congrats = "Nice work — that fits what we covered in this step."
+    congrats = (
+        "Nice work — that fits what we covered in this step."
+        + _suggestion_footer(
+            "Can we go deeper on what we just covered?",
+            "What should I focus on next?",
+            "I'm ready to move on—what's next?",
+        )
+    )
 
     if plan_len == 0 or new_idx >= plan_len:
         if _is_adhoc_session(state):
             adhoc_done = (
                 "Great job! Do you have any other questions about this or something new?"
+                + _suggestion_footer(
+                    "Can you explain that last idea one more time?",
+                    "How does this connect to the rest of the lesson?",
+                    "What is a common mistake to avoid here?",
+                )
             )
             new_messages = _append_message(state.get("messages"), "assistant", adhoc_done)
             return {
@@ -838,7 +906,7 @@ Use CORRECT only if the chosen letter matches the best answer grounded strictly 
 def remediate_node(state: TutorState) -> TutorState:
     topic = state.get("current_topic", "the lesson")
     context = retrieve_context(topic + "\n" + _last_user_text(state.get("messages")))
-    base_prompt = _base_prompt(topic, context)
+    base_prompt = _learner_base_prompt(topic, context)
     attempts = int(state.get("remediation_attempts", 0)) + 1
     llm = _llm()
     if attempts >= 3:
@@ -897,7 +965,7 @@ NODE: SOCRATIC REMEDIATION
 def feynman_node(state: TutorState) -> TutorState:
     topic = state.get("current_topic", "the lesson")
     context = retrieve_context(topic + "\n" + _last_user_text(state.get("messages")))
-    base_prompt = _base_prompt(topic, context)
+    base_prompt = _learner_base_prompt(topic, context)
     feyn = """
 
 NODE: FEYNMAN CHECKPOINT (FINAL)
