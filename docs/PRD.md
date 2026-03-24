@@ -1,54 +1,59 @@
 # Product Requirements Document (PRD): Finance AI Tutor (PoC)
 
-## 1. Product Overview
-The Finance AI Tutor is a multi-modal, context-aware educational platform designed for advanced financial learners (e.g., CFA candidates). This Proof of Concept (PoC) specifically targets the CFA Level II Equity Valuation - Reading 22 (Discounted Dividend Valuation) module. Moving away from rigid, node-based Learning Management Systems (LMS) and reactive chatbots, this product implements a **User-Led Discovery Flow** orchestrated by LangGraph, providing contextual guidance and hallucination-free RAG support for an immersive learning experience.
+## 1. Executive Summary & Objective
+The Finance AI Tutor is a Proof of Concept (PoC) designed to transform static financial curriculum (specifically CFA Level II Equity Valuation) into an interactive, multi-modal learning experience. 
 
-## 2. Core Vision & Design Principles (The 8 Core Innovations)
-The product architecture and UX are driven by eight fundamental design choices:
-1. **"Open Classroom" Exploration Model:** The AI acts as a professional tutor in an always-open environment, supporting non-linear, self-directed learning rather than forced linear progression.
-2. **Strict Anti-Hallucination Engineering:** Utilizes a closed-book RAG architecture combined with an "Implicit Calculation Scratchpad" (Chain of Thought) to guarantee the AI generates accurate, mathematically sound financial explanations strictly tied to the curriculum.
-3. **Seamless Multi-Modal Workspace:** Users can instantly toggle between Textbook, AI Slides, AI Quizzes, and Video components without losing conversational context or interrupting their learning flow.
-4. **Optimized "Two-Page Spread" Reading UX:** Features a custom "split two-page, single-page turn" design to prevent cognitive breaks when reading complex financial concepts that span across pages.
-5. **Socratic Remediation & The Feynman Technique:** Incorrect quiz answers trigger Socratic hints to guide the user's algebraic logic rather than revealing the correct option. Slides conclude with a "Feynman Node," challenging the user to summarize concepts to prove mastery.
-6. **Interactive "Highlight-to-Action" Tooling:** Users can highlight text within the textbook or slides to instantly query the AI tutor, translate, or add to notes, maximizing active learning.
-7. **Context-Aware Predictive Suggestions:** The chat UI automatically generates contextual follow-up prompts (`---SUGGESTIONS---`) after every interaction to cure "prompt blank paralysis" and drive the conversation forward.
-8. **Total Data-to-Logic Decoupling:** The pedagogical orchestrator is entirely decoupled from the source material, achieving a highly scalable "teach what it is fed" capability.
+**Objective:** To build an AI-driven, hallucination-free educational platform that prioritizes learner agency, allowing users to seamlessly transition between reading, chatting, and self-assessment within a unified workspace.
 
-## 3. Core Features & State Machine Requirements
+## 2. Target Audience & User Personas
+* **Primary Persona:** Advanced Financial Learner (e.g., CFA Candidate).
+  * *Pain Points:* Traditional LMS pathways are too rigid. LLMs hallucinate complex financial formulas. Switching between PDF textbooks, video lectures, and chat interfaces breaks learning flow.
+  * *Goals:* Needs mathematically accurate explanations, immediate contextual help while reading, and active recall testing.
 
-### 3.1 LangGraph Pedagogical Orchestrator
-The backend relies on LangGraph to construct a Directed Cyclic Graph (DCG) that manages the pedagogical state and intent routing.
-* **Required Graph Nodes:** `greeting`, `planning`, `micro_teach`, `qna` (Interactive Sandbox), `assess` (MCQ generation), `remediate` (Socratic feedback), and `feynman` (capstone summary).
-* **Socratic Evaluation (`remediate`):** When a user fails an assessment, the system must trigger a Diagnostic Chain-of-Thought. The AI steps through the algebraic logic to help the user locate their specific error without exposing the correct answer.
-* **Circuit Breaker Mechanism:** The state machine must track `remediation_attempts`. If a user fails the same concept $\ge 3$ times, the AI breaks the Socratic loop and provides a clear, step-by-step resolution to prevent extreme frustration.
+## 3. Scope & Assumptions
+* **In Scope for PoC:** Local deployment, Single PDF ingestion (CFA Reading 22), LangGraph stateful chat orchestration, dynamic generation of Markdown slides and MCQs, custom UI workspace.
+* **Out of Scope for PoC:** User authentication/login, persistent cloud database for cross-session history, enterprise-grade OCR for nested tables, mobile responsiveness.
 
-### 3.2 Generative UI & Multi-Modality
-* **Decoupled Utilities:** Slides (Markdown/KaTeX) and Quizzes must operate as on-demand, stateless APIs to prevent state bloat within the LangGraph orchestrator.
-* **PDF Interactivity:** The frontend must integrate a custom `react-pdf` reader with boundary clamping and text-selection listeners, bridging the static textbook with the dynamic AI tutor.
+## 4. User Stories & Acceptance Criteria (AC)
 
-## 4. Anti-Hallucination & Engineering Constraints
-Given the strict requirements of financial mathematics, the system must aggressively mitigate LLM hallucinations.
-* **Implicit Scratchpad Pattern:** All Pydantic schemas for mathematical generation must prioritize a hidden `calculation_scratchpad` field. The LLM is forced to explicitly write out its algebraic derivations *before* outputting the final `correct_answer`. This field is hidden from the frontend UI.
-* **Ironclad System Prompt (`IRONCLAD_TEMPLATE`):** The global prompt must enforce strict "Closed-Book" rules. The LLM must gracefully decline questions that fall outside the retrieved RAG context.
-* **High-Fidelity Ingestion:** Document parsing must utilize PyMuPDF (`fitz`) with specific chunking parameters (`CHUNK_SIZE = 4000`, `CHUNK_OVERLAP = 800`) to prevent multi-step valuation formulas from being severed during vectorization.
+### Epic 1: Multi-Modal Learning Workspace
+**User Story 1.1:** As a learner, I want to view my textbook, slides, and quizzes in the same window as my chat tutor so that I don't lose context.
+* **AC 1:** The UI must implement a split-pane layout (Content on left, Chat on right).
+* **AC 2:** Users can toggle between Textbook, Slides, and Quiz tabs with zero latency and without losing their chat history.
 
-## 5. Architecture & Deployment Specifications
+**User Story 1.2:** As a learner, I want the textbook reading experience to feel natural and uninterrupted.
+* **AC 1:** The PDF viewer must display a "Two-Page Spread" layout.
+* **AC 2:** Pagination must progress one page at a time to prevent cognitive breaks for concepts spanning across pages.
 
-### 5.1 Tech Stack
-* **Frontend:** Next.js (React), Tailwind CSS, `react-pdf`.
-* **Backend:** Python FastAPI, Uvicorn, LangGraph, LangChain.
-* **AI & Data Layer:** OpenAI `gpt-4o`, ChromaDB, PyMuPDF.
+### Epic 2: Pedagogical AI Orchestration (LangGraph)
+**User Story 2.1:** As a learner, I want the AI to suggest what I should ask next so that I don't experience "prompt paralysis."
+* **AC 1:** After every AI response, the system must generate 2-3 clickable predictive suggestion pills (`---SUGGESTIONS---`).
 
-### 5.2 Containerization (Docker)
-The system is deployed as a multi-container stack via `docker-compose.yml`:
-* **Frontend Service (`Dockerfile.frontend`):** Multi-stage build based on `node:20-alpine`, exposing port `3000`.
-* **Backend Service (`Dockerfile.backend`):** Built on `python:3.11-slim`. 
-* **Startup Sequence:** The backend container **must** execute the data ingestion script (`python -m backend.ingest_pdf`) to build/rebuild the Chroma index *before* starting the FastAPI uvicorn server.
-* **Data Persistence:** ChromaDB storage must be mapped to a host volume (`./backend/chroma_db`) to prevent embedding loss between container restarts.
+**User Story 2.2:** As a learner, I want the AI to guide me when I get a question wrong, rather than just giving me the answer.
+* **AC 1:** When a user selects a wrong answer in the Assessment mode, the AI must provide Socratic hints (Diagnostic CoT) to help them find the algebraic error.
+* **AC 2:** The AI must *never* reveal the correct MCQ option directly upon a failure.
 
-## 6. Enterprise Scaling Roadmap
-To evolve this PoC into a production-grade enterprise platform, the following milestones are planned:
-1. **Enterprise Multi-Modal Parsing:** Transition to LlamaParse or Unstructured.io to accurately extract nested financial tables and charts from CFA PDFs.
-2. **GraphRAG Integration:** Upgrade from standard semantic ChromaDB similarity to an entity-based Knowledge Graph (GraphRAG) to facilitate cross-chapter financial insights.
-3. **Progressive Scaffolding & Gating:** Introduce a "Prerequisite Gating" mechanism (e.g., Mandatory Video $\rightarrow$ Baseline Quiz $\rightarrow$ Unlock Free Chat) to solve the "cold start" problem for absolute beginners.
-4. **Persistent Analytics (PostgreSQL):** Implement a relational database to store user telemetry and LangGraph checkpoints, allowing educators to identify systemic curriculum gaps based on aggregate performance data.
+### Epic 3: High-Fidelity Content Generation
+**User Story 3.1:** As a learner, I want to highlight text in the PDF to instantly ask the tutor to explain it.
+* **AC 1:** Highlighting text triggers a pop-up action menu.
+* **AC 2:** Clicking "Ask Tutor" injects the highlighted text into the chat and generates a context-aware response.
+
+**User Story 3.2:** As a learner, I want the AI to generate summary slides of the chapter I am studying.
+* **AC 1:** The system provides an on-demand API to generate slides.
+* **AC 2:** Slides must support KaTeX rendering for financial formulas.
+* **AC 3:** The final slide must include a "Feynman Node" prompt, challenging the user to summarize the concept.
+
+## 5. Non-Functional Requirements (NFRs)
+
+### 5.1 Anti-Hallucination & Accuracy (Critical)
+* **Strict RAG Grounding:** The AI must operate in a "Closed-Book" mode, strictly utilizing the ingested ChromaDB vector store.
+* **Mathematical Accuracy:** To prevent algebraic hallucinations, the generative APIs must utilize an **Implicit Scratchpad Pattern**. The LLM must output a `calculation_scratchpad` (hidden from the user) before populating the final answer options.
+
+### 5.2 Performance & Architecture
+* **Decoupled State:** Chat orchestration (Stateful) must be separated from Slide/Quiz generation (Stateless) to prevent LangGraph state bloat and reduce latency.
+* **Containerization:** The entire application (Next.js frontend, FastAPI backend, ChromaDB) must be deployable via a single `docker-compose up` command to ensure environmental consistency.
+
+## 6. Success Metrics (KPIs for Future Beta)
+* **Engagement:** Average session length and number of chat turns per session.
+* **Accuracy:** Rate of reported AI hallucinations or math errors (Target: < 1%).
+* **Pedagogical Effectiveness:** Completion rate of the "Feynman Node" summaries.
